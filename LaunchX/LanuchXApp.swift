@@ -57,6 +57,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func openSettings() {
+        PanelManager.shared.hidePanel(deactivateApp: false)
         NSApp.sendAction(Selector("showSettingsWindow:"), to: nil, from: nil)
         NSApp.activate(ignoringOtherApps: true)
     }

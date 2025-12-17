@@ -23,6 +23,9 @@ struct SettingsView: View {
         }
         .frame(width: 550, height: 450)
         .padding()
+        .onAppear {
+            PanelManager.shared.hidePanel(deactivateApp: false)
+        }
     }
 }
 

@@ -38,8 +38,8 @@ class PanelManager: ObservableObject {
 
     func togglePanel() {
         // Check actual window state as source of truth
-        if panel.isVisible {
-            hidePanel()
+        if panel.isVisible && NSApp.isActive {
+            hidePanel(deactivateApp: true)
         } else {
             showPanel()
         }
@@ -59,10 +59,13 @@ class PanelManager: ObservableObject {
         isPanelVisible = true
     }
 
-    func hidePanel() {
+    func hidePanel(deactivateApp: Bool = false) {
         panel.orderOut(nil)
-        // Hide the application process so focus returns to the previous app
-        NSApp.hide(nil)
+
+        if deactivateApp {
+            // Hide the application process so focus returns to the previous app
+            NSApp.hide(nil)
+        }
 
         // Update state
         isPanelVisible = false
