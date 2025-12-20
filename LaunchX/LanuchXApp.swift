@@ -16,6 +16,8 @@ struct LaunchXApp: App {
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem?
+    var onboardingWindow: NSWindow?
+    var isQuitting = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Disable automatic window tabbing (Sierra+)
@@ -41,23 +43,45 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         if isFirstLaunch {
             UserDefaults.standard.set(true, forKey: "hasLaunchedBefore")
-            // Open settings on first launch
+            // Open onboarding on first launch
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                self.openSettings()
+                self.openOnboarding()
             }
-            return
+        } else {
+            // Just check permissions state without forcing UI
+            PermissionService.shared.checkAllPermissions()
+        }
+    }
+
+    func openOnboarding() {
+        if onboardingWindow == nil {
+            let rootView = OnboardingView { [weak self] in
+                self?.onboardingWindow?.close()
+                self?.onboardingWindow = nil
+                // Show the panel after onboarding is done
+                PanelManager.shared.togglePanel()
+            }
+
+            let window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 600, height: 550),
+                styleMask: [.titled, .closable, .fullSizeContentView],
+                backing: .buffered, defer: false)
+            window.center()
+            window.setFrameAutosaveName("OnboardingWindow")
+            window.contentView = NSHostingView(rootView: rootView)
+            window.isReleasedWhenClosed = false
+            window.titlebarAppearsTransparent = true
+            window.title = "Welcome to LaunchX"
+
+            // Hide zoom and minimize buttons for a cleaner look
+            window.standardWindowButton(.zoomButton)?.isHidden = true
+            window.standardWindowButton(.miniaturizeButton)?.isHidden = true
+
+            onboardingWindow = window
         }
 
-        // Trigger permission checks
-        let service = PermissionService.shared
-
-        // Delay to allow async checks to complete
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            // If accessibility is missing, prompt user
-            if !service.isAccessibilityGranted {
-                self.openSettings()
-            }
-        }
+        onboardingWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     func setupStatusItem() {
@@ -74,7 +98,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(
             NSMenuItem(title: "Settings...", action: #selector(openSettings), keyEquivalent: ","))
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "Quit", action: #selector(quitApp), keyEquivalent: "q"))
+        menu.addItem(NSMenuItem(title: "Quit", action: #selector(explicitQuit), keyEquivalent: "q"))
         statusItem?.menu = menu
     }
 
@@ -84,11 +108,30 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func openSettings() {
         PanelManager.shared.hidePanel(deactivateApp: false)
-        PanelManager.shared.openSettingsPublisher.send()
+        // Send action to open the Settings window defined in the App struct
+        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    @objc func quitApp() {
+    @objc func explicitQuit() {
+        isQuitting = true
         NSApp.terminate(nil)
+    }
+
+    // Intercept termination request (Cmd+Q) to keep the app running in the background
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if isQuitting {
+            return .terminateNow
+        }
+
+        // Close all windows (Settings, Onboarding, etc.) but keep the app running
+        for window in NSApp.windows {
+            window.close()
+        }
+
+        // Hide the application
+        NSApp.hide(nil)
+
+        return .terminateCancel
     }
 }

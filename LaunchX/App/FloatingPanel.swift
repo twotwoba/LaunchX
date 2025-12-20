@@ -11,7 +11,7 @@ class FloatingPanel: NSPanel {
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false)
-
+  
         // Level: .mainMenu places it above standard windows and the dock
         self.level = .mainMenu
 
