@@ -5,7 +5,6 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var viewModel = SearchViewModel()
     @FocusState private var isFocused: Bool
-    @State private var window: NSWindow?
     @AppStorage("defaultWindowMode") private var windowMode: String = "simple"
     @Environment(\.openSettings) private var openSettings
 
@@ -46,6 +45,7 @@ struct ContentView: View {
                         .foregroundColor(.secondary)
                         .padding()
                 }
+                Spacer()
             } else {
                 Divider()
                 if windowMode == "full" {
@@ -53,25 +53,17 @@ struct ContentView: View {
                 } else {
                     EmptyStateView()
                 }
+                Spacer()
             }
         }
         .background(VisualEffectView(material: .sidebar, blendingMode: .behindWindow))
         .cornerRadius(16)
-        .frame(width: 650)
+        .frame(width: 650, height: 500)
         .overlay(
             RoundedRectangle(cornerRadius: 16)
                 .stroke(Color.white.opacity(0.2), lineWidth: 0.5)
         )
-        .fixedSize(horizontal: false, vertical: true)
-        .background(WindowAccessor(window: $window))
-        .background(
-            GeometryReader { geo in
-                Color.clear.onChange(of: geo.size) { _, newSize in
-                    resizeWindow(to: newSize)
-                }
-            }
-        )
-        // 窗口出现或成为焦点时，强制输入框获得焦点
+        // Force focus when window appears
         .onAppear {
             DispatchQueue.main.async { isFocused = true }
         }
@@ -84,30 +76,6 @@ struct ContentView: View {
         }
         .onReceive(PanelManager.shared.openSettingsPublisher) { _ in
             openSettings()
-        }
-    }
-
-    private func resizeWindow(to size: CGSize) {
-        guard let window = window else { return }
-        let currentFrame = window.frame
-        let newHeight = size.height
-        let heightDelta = newHeight - currentFrame.height
-
-        // Only resize if significant change to avoid jitter
-        if abs(heightDelta) > 0.5 {
-            // Resize from top (keeping top-left corner fixed visually, or centered depending on preference)
-            // Usually spotlight grows downwards.
-            // Origin Y is at the bottom in Cocoa screen coordinates.
-            // So to grow down, we must lower the origin.y by the delta.
-            let newOriginY = currentFrame.origin.y - heightDelta
-
-            let newFrame = NSRect(
-                x: currentFrame.origin.x,
-                y: newOriginY,
-                width: size.width,
-                height: newHeight
-            )
-            window.setFrame(newFrame, display: true, animate: false)
         }
     }
 
@@ -148,7 +116,6 @@ struct ContentView: View {
 
 struct ResultsListView: View {
     @ObservedObject var viewModel: SearchViewModel
-    @State private var contentHeight: CGFloat = 0
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -165,21 +132,7 @@ struct ResultsListView: View {
                     }
                 }
                 .padding(.vertical, 10)
-                .overlay(
-                    GeometryReader { geo in
-                        Color.clear
-                            .onAppear {
-                                contentHeight = geo.size.height
-                            }
-                            .onChange(of: geo.size.height) { _, newHeight in
-                                contentHeight = newHeight
-                            }
-                    }
-                )
             }
-            // Dynamic height: fit content but cap at 350
-            // Initial height 200 ensures there is space to render and measure content
-            .frame(height: contentHeight > 0 ? min(contentHeight, 350) : 200)
             .onChange(of: viewModel.selectedIndex) { _, newIndex in
                 proxy.scrollTo(newIndex, anchor: .center)
             }
@@ -356,19 +309,4 @@ struct KeyEventHandler: NSViewRepresentable {
             }
         }
     }
-}
-
-// Helper to access the underlying NSWindow
-struct WindowAccessor: NSViewRepresentable {
-    @Binding var window: NSWindow?
-
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView()
-        DispatchQueue.main.async {
-            self.window = view.window
-        }
-        return view
-    }
-
-    func updateNSView(_ nsView: NSView, context: Context) {}
 }
