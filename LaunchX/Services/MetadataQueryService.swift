@@ -4,12 +4,6 @@ import Foundation
 
 /// A high-performance service that builds and maintains an in-memory index
 /// of files using the high-level NSMetadataQuery API.
-///
-/// Workflow:
-/// 1. Uses NSMetadataQuery to fetch metadata for configured scopes efficiently.
-/// 2. Filters out excluded paths (e.g., node_modules) during ingestion.
-/// 3. Caches results in memory wrapped in `CachedSearchableString` for fast Pinyin matching.
-/// 4. Listens for live updates from the system index via standard Notifications.
 class MetadataQueryService: ObservableObject {
     static let shared = MetadataQueryService()
 
@@ -19,7 +13,7 @@ class MetadataQueryService: ObservableObject {
     // The main in-memory index
     private(set) var indexedItems: [IndexedItem] = []
 
-    // Processing queue
+    // Processing queue for heavy lifting (Pinyin calculation)
     private let processingQueue = DispatchQueue(
         label: "com.launchx.metadata.processing", qos: .userInitiated)
 
@@ -43,8 +37,6 @@ class MetadataQueryService: ObservableObject {
             self.query = query
 
             // Set Search Scopes
-            // NSMetadataQuery accepts an array of directory paths (Strings) or scope constants.
-            // We pass the absolute paths from the config.
             query.searchScopes = config.searchScopes
 
             // Predicate
@@ -100,8 +92,7 @@ class MetadataQueryService: ObservableObject {
     func search(text: String, limit: Int = 50) -> [IndexedItem] {
         guard !text.isEmpty else { return [] }
 
-        // Filter on main thread
-        // For large datasets, this could be moved to background, but for <50k items it's usually instant.
+        // Filter on main thread (fast for <50k items)
         let itemsToCheck = indexedItems
 
         let matches = itemsToCheck.filter { item in
@@ -130,17 +121,16 @@ class MetadataQueryService: ObservableObject {
     }
 
     @objc private func queryDidUpdate(_ notification: Notification) {
-        // print("MetadataQueryService: NSMetadataQuery updated results")
         processQueryResults(isInitial: false)
     }
 
     private func processQueryResults(isInitial: Bool) {
         guard let query = query else { return }
 
-        // Pause live updates
+        // Pause live updates to ensure stability during iteration
         query.disableUpdates()
 
-        // Capture results immediately on main thread to avoid mutation issues
+        // Capture snapshot on Main Thread (fast)
         let results = query.results as? [NSMetadataItem] ?? []
 
         // Resume updates immediately so we don't block the query for long
@@ -180,9 +170,13 @@ class MetadataQueryService: ObservableObject {
                 }
 
                 // --- Extraction ---
+
+                // Prioritize Display Name (Localized) for Pinyin
                 let name =
-                    item.value(forAttribute: NSMetadataItemFSNameKey) as? String
+                    item.value(forAttribute: NSMetadataItemDisplayNameKey) as? String
+                    ?? item.value(forAttribute: NSMetadataItemFSNameKey) as? String
                     ?? (path as NSString).lastPathComponent
+
                 let date =
                     item.value(forAttribute: NSMetadataItemContentModificationDateKey) as? Date
                     ?? Date()
