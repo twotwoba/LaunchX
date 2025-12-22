@@ -36,9 +36,6 @@ class PanelManager: NSObject, NSWindowDelegate {
         // Setup AppKit view controller
         viewController = SearchPanelViewController()
         panel.contentView = viewController?.view
-        panel.contentView?.wantsLayer = true
-        panel.contentView?.layer?.cornerRadius = 16
-        panel.contentView?.layer?.masksToBounds = true
     }
 
     func togglePanel() {

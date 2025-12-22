@@ -24,7 +24,7 @@ class FloatingPanel: NSPanel {
         // Visuals
         self.backgroundColor = .clear
         self.isOpaque = false
-        self.hasShadow = true
+        self.hasShadow = false  // No shadow to avoid corner issues
 
         // Behavior - all set to minimize system overhead
         self.hidesOnDeactivate = false

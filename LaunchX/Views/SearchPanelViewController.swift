@@ -23,13 +23,15 @@ class SearchPanelViewController: NSViewController {
     // MARK: - Lifecycle
 
     override func loadView() {
-        // Create root view with visual effect
+        // Create visual effect view with rounded corners
         let visualEffectView = NSVisualEffectView()
         visualEffectView.material = .sidebar
         visualEffectView.blendingMode = .behindWindow
         visualEffectView.state = .active
         visualEffectView.wantsLayer = true
         visualEffectView.layer?.cornerRadius = 16
+        visualEffectView.layer?.masksToBounds = true
+
         self.view = visualEffectView
     }
 
@@ -113,7 +115,8 @@ class SearchPanelViewController: NSViewController {
 
             // Search field
             searchField.leadingAnchor.constraint(equalTo: searchIcon.trailingAnchor, constant: 12),
-            searchField.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+            searchField.trailingAnchor.constraint(
+                equalTo: view.trailingAnchor, constant: -20),
             searchField.centerYAnchor.constraint(equalTo: searchIcon.centerYAnchor),
             searchField.heightAnchor.constraint(equalToConstant: 32),
 
