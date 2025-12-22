@@ -17,6 +17,12 @@ class MetadataQueryService: ObservableObject {
     @Published var isIndexing: Bool = false
     @Published var indexedItemCount: Int = 0
 
+    // Index statistics
+    @Published var appsCount: Int = 0
+    @Published var filesCount: Int = 0
+    @Published var indexingDuration: TimeInterval = 0
+    @Published var lastIndexTime: Date?
+
     // Split index for optimization
     // IndexedItem is a class, so array copies are cheap (copying references)
     private var appsIndex: [IndexedItem] = []
@@ -34,6 +40,8 @@ class MetadataQueryService: ObservableObject {
 
     private var query: NSMetadataQuery?
     private var searchConfig: SearchConfig = SearchConfig()
+    private var configObserver: NSObjectProtocol?
+    private var indexingStartTime: Date?
 
     // Cancellation token for search requests
     private var currentSearchWorkItem: DispatchWorkItem?
@@ -44,7 +52,30 @@ class MetadataQueryService: ObservableObject {
     private let updateThrottleInterval: TimeInterval = 2.0  // Minimum 2 seconds between updates
     private var initialIndexingComplete = false
 
-    private init() {}
+    private init() {
+        // Listen for config changes
+        configObserver = NotificationCenter.default.addObserver(
+            forName: .searchConfigDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            if let config = notification.object as? SearchConfig {
+                self?.reloadWithConfig(config)
+            }
+        }
+    }
+
+    deinit {
+        if let observer = configObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+    }
+
+    /// Reload indexing with new config
+    func reloadWithConfig(_ config: SearchConfig) {
+        print("MetadataQueryService: Reloading with new config")
+        startIndexing(with: config)
+    }
 
     // MARK: - Public API
 
@@ -53,6 +84,7 @@ class MetadataQueryService: ObservableObject {
             self.stopIndexing()
             self.searchConfig = config
             self.isIndexing = true
+            self.indexingStartTime = Date()
 
             let query = NSMetadataQuery()
             self.query = query
@@ -102,8 +134,13 @@ class MetadataQueryService: ObservableObject {
             NotificationCenter.default.removeObserver(
                 self, name: .NSMetadataQueryDidUpdate, object: query)
             self.query = nil
-            self.isIndexing = false
         }
+        // Clear old index data
+        appsIndex.removeAll()
+        filesIndex.removeAll()
+        indexedPaths.removeAll()
+        isIndexing = false
+        initialIndexingComplete = false
     }
 
     // MARK: - Search Logic
@@ -403,8 +440,9 @@ class MetadataQueryService: ObservableObject {
 
             // Capture config for thread safety
             let excludedPaths = self.searchConfig.excludedPaths
-            let excludedNames = self.searchConfig.excludedNames
+            let excludedNames = self.searchConfig.excludedFolderNames
             let excludedNamesSet = Set(excludedNames)
+            let excludedExtensions = Set(self.searchConfig.excludedExtensions)
 
             // Parallel Loop
             DispatchQueue.concurrentPerform(iterations: processCount) { i in
@@ -412,11 +450,18 @@ class MetadataQueryService: ObservableObject {
 
                 let pathComponents = path.components(separatedBy: "/")
 
-                // Filtering
+                // Filtering by folder names
                 if !excludedNamesSet.isDisjoint(with: pathComponents) { return }
 
+                // Filtering by paths
                 if !excludedPaths.isEmpty {
                     if excludedPaths.contains(where: { path.hasPrefix($0) }) { return }
+                }
+
+                // Filtering by file extension
+                if !excludedExtensions.isEmpty {
+                    let ext = (path as NSString).pathExtension.lowercased()
+                    if excludedExtensions.contains(ext) { return }
                 }
 
                 // Prioritize Display Name
@@ -493,12 +538,21 @@ class MetadataQueryService: ObservableObject {
                 }
 
                 self.indexedItemCount = self.appsIndex.count + self.filesIndex.count
+                self.appsCount = self.appsIndex.count
+                self.filesCount = self.filesIndex.count
                 self.isIndexing = false
 
                 if isInitial {
                     self.initialIndexingComplete = true
+
+                    // Update statistics
+                    if let startTime = self.indexingStartTime {
+                        self.indexingDuration = Date().timeIntervalSince(startTime)
+                    }
+                    self.lastIndexTime = Date()
+
                     print(
-                        "MetadataQueryService: Indexing complete. Apps: \(self.appsIndex.count), Files: \(self.filesIndex.count)"
+                        "MetadataQueryService: Indexing complete. Apps: \(self.appsIndex.count), Files: \(self.filesIndex.count), Duration: \(String(format: "%.3f", self.indexingDuration))s"
                     )
 
                     // IMPORTANT: Stop the query after initial indexing to prevent CPU spikes

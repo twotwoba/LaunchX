@@ -38,8 +38,8 @@ class SearchPanelViewController: NSViewController {
         setupUI()
         setupKeyboardMonitor()
 
-        // Start indexing
-        let config = SearchConfig()
+        // Start indexing with saved config
+        let config = SearchConfig.load()
         metadataService.startIndexing(with: config)
 
         // Register for panel hide callback

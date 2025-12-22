@@ -10,8 +10,7 @@ struct SettingsView: View {
                     Label("General", systemImage: "gear")
                 }
 
-            // Placeholder for other settings
-            Text("Search & Indexing")
+            SearchSettingsView()
                 .tabItem {
                     Label("Search", systemImage: "magnifyingglass")
                 }
@@ -21,7 +20,7 @@ struct SettingsView: View {
                     Label("Extensions", systemImage: "puzzlepiece")
                 }
         }
-        .frame(width: 550, height: 450)
+        .frame(width: 600, height: 480)
         .padding()
         .onAppear {
             PanelManager.shared.hidePanel(deactivateApp: false)
