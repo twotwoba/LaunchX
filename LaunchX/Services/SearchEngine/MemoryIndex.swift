@@ -1,5 +1,5 @@
-import Foundation
 import Cocoa
+import Foundation
 
 /// High-performance in-memory search index
 /// Provides O(1) prefix matching using Trie data structure
@@ -26,6 +26,9 @@ final class MemoryIndex {
         let pinyinFull: String?
         let pinyinAcronym: String?
 
+        // English word acronym (e.g., "vsc" for "Visual Studio Code")
+        let wordAcronym: String?
+
         // Lazy-loaded icon
         private var _icon: NSImage?
         var icon: NSImage {
@@ -46,6 +49,29 @@ final class MemoryIndex {
             self.modifiedDate = record.modifiedDate ?? Date.distantPast
             self.pinyinFull = record.pinyinFull
             self.pinyinAcronym = record.pinyinAcronym
+
+            // Generate word acronym for multi-word names (e.g., "Visual Studio Code" -> "vsc")
+            self.wordAcronym = SearchItem.generateWordAcronym(from: record.name)
+        }
+
+        /// Generate acronym from first letter of each word
+        /// "Visual Studio Code" -> "vsc", "Activity Monitor" -> "am"
+        private static func generateWordAcronym(from name: String) -> String? {
+            // Split by spaces, hyphens, underscores
+            let words = name.components(separatedBy: CharacterSet(charactersIn: " -_"))
+                .filter { !$0.isEmpty }
+
+            // Only generate if multiple words
+            guard words.count > 1 else { return nil }
+
+            var acronym = ""
+            for word in words {
+                if let first = word.first, first.isLetter {
+                    acronym.append(first.lowercased())
+                }
+            }
+
+            return acronym.isEmpty ? nil : acronym
         }
 
         /// Match type for sorting priority
@@ -74,15 +100,21 @@ final class MemoryIndex {
             return nil
         }
 
-        /// Check pinyin match
+        /// Check pinyin match or word acronym match
         func matchesPinyin(_ lowerQuery: String) -> Bool {
+            // Check Chinese pinyin acronym (e.g., "wx" for "微信")
             if let acronym = pinyinAcronym, acronym.hasPrefix(lowerQuery) {
                 return true
             }
+            // Check Chinese pinyin full (e.g., "weixin" for "微信")
             if let full = pinyinFull {
                 if full.hasPrefix(lowerQuery) || full.contains(lowerQuery) {
                     return true
                 }
+            }
+            // Check English word acronym (e.g., "vsc" for "Visual Studio Code")
+            if let acronym = wordAcronym, acronym.hasPrefix(lowerQuery) {
+                return true
             }
             return false
         }
@@ -171,7 +203,9 @@ final class MemoryIndex {
             self.totalCount = self.allItems.count
 
             let duration = Date().timeIntervalSince(startTime)
-            print("MemoryIndex: Built index with \(self.totalCount) items in \(String(format: "%.3f", duration))s")
+            print(
+                "MemoryIndex: Built index with \(self.totalCount) items in \(String(format: "%.3f", duration))s"
+            )
 
             DispatchQueue.main.async {
                 completion?()
