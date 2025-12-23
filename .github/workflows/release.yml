@@ -1,0 +1,92 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: macos-14
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Xcode
+      uses: maxim-lobanov/setup-xcode@v1
+      with:
+        xcode-version: latest-stable
+
+    - name: Build app
+      run: |
+        xcodebuild -scheme LaunchX \
+          -configuration Release \
+          -archivePath $PWD/build/LaunchX.xcarchive \
+          archive \
+          CODE_SIGN_IDENTITY="-" \
+          CODE_SIGNING_REQUIRED=NO \
+          CODE_SIGNING_ALLOWED=NO
+
+    - name: Export app
+      run: |
+        mkdir -p build/export
+        cp -R build/LaunchX.xcarchive/Products/Applications/LaunchX.app build/export/
+
+    - name: Create DMG
+      run: |
+        # Install create-dmg
+        brew install create-dmg
+
+        # Create DMG
+        create-dmg \
+          --volname "LaunchX" \
+          --volicon "LaunchX/Assets.xcassets/AppIcon.appiconset/icon_512x512.png" \
+          --window-pos 200 120 \
+          --window-size 600 400 \
+          --icon-size 100 \
+          --icon "LaunchX.app" 150 185 \
+          --hide-extension "LaunchX.app" \
+          --app-drop-link 450 185 \
+          "build/LaunchX-${{ github.ref_name }}.dmg" \
+          "build/export/" || true
+
+        # Fallback: create simple DMG if create-dmg fails
+        if [ ! -f "build/LaunchX-${{ github.ref_name }}.dmg" ]; then
+          hdiutil create -volname "LaunchX" -srcfolder "build/export" -ov -format UDZO "build/LaunchX-${{ github.ref_name }}.dmg"
+        fi
+
+    - name: Create ZIP
+      run: |
+        cd build/export
+        zip -r ../LaunchX-${{ github.ref_name }}.zip LaunchX.app
+
+    - name: Generate release notes
+      id: release_notes
+      run: |
+        echo "notes<<EOF" >> $GITHUB_OUTPUT
+        echo "## LaunchX ${{ github.ref_name }}" >> $GITHUB_OUTPUT
+        echo "" >> $GITHUB_OUTPUT
+        echo "### Installation" >> $GITHUB_OUTPUT
+        echo "1. Download \`LaunchX-${{ github.ref_name }}.dmg\` or \`LaunchX-${{ github.ref_name }}.zip\`" >> $GITHUB_OUTPUT
+        echo "2. Open the DMG and drag LaunchX to Applications, or unzip and move to Applications" >> $GITHUB_OUTPUT
+        echo "3. Launch LaunchX and grant necessary permissions" >> $GITHUB_OUTPUT
+        echo "4. Use \`Option + Space\` to activate search" >> $GITHUB_OUTPUT
+        echo "" >> $GITHUB_OUTPUT
+        echo "### System Requirements" >> $GITHUB_OUTPUT
+        echo "- macOS 13.0 or later" >> $GITHUB_OUTPUT
+        echo "- Apple Silicon or Intel Mac" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        name: LaunchX ${{ github.ref_name }}
+        body: ${{ steps.release_notes.outputs.notes }}
+        draft: false
+        prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') }}
+        files: |
+          build/LaunchX-${{ github.ref_name }}.dmg
+          build/LaunchX-${{ github.ref_name }}.zip
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
