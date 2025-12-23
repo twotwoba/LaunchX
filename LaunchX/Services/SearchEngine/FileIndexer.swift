@@ -1,4 +1,5 @@
 import Cocoa
+import CoreServices
 import Foundation
 
 /// File system scanner for building the initial index
@@ -18,13 +19,13 @@ final class FileIndexer {
 
     // MARK: - Localized Name Helper
 
-    /// Get localized app name from InfoPlist.strings (supports Chinese names like "微信")
+    /// Get localized app name (supports Chinese names like "微信", "企业微信", "活动监视器")
     private func getLocalizedAppName(at appPath: String) -> String? {
-        let resourcesPath = appPath + "/Contents/Resources"
         let fm = FileManager.default
 
-        // Try Chinese localization directories
-        let lprojDirs = ["zh-Hans.lproj", "zh-Hant.lproj", "zh_CN.lproj", "zh_TW.lproj"]
+        // Method 1: Check InfoPlist.strings in Chinese localization directories
+        let resourcesPath = appPath + "/Contents/Resources"
+        let lprojDirs = ["zh-Hans.lproj", "zh_CN.lproj", "zh-Hant.lproj", "zh_TW.lproj"]
 
         for lproj in lprojDirs {
             let stringsPath = resourcesPath + "/" + lproj + "/InfoPlist.strings"
@@ -61,6 +62,27 @@ final class FileIndexer {
                     return String(str[range])
                 }
             }
+        }
+
+        // Method 2: Check Info.plist CFBundleDisplayName (some apps like 企业微信 use this)
+        let infoPlistPath = appPath + "/Contents/Info.plist"
+        if let infoPlistData = fm.contents(atPath: infoPlistPath),
+            let plist = try? PropertyListSerialization.propertyList(
+                from: infoPlistData, format: nil) as? [String: Any]
+        {
+            if let displayName = plist["CFBundleDisplayName"] as? String,
+                displayName.hasMultiByteCharacters
+            {
+                return displayName
+            }
+        }
+
+        // Method 3: Use Spotlight metadata (for system apps like Activity Monitor -> 活动监视器)
+        if let mdItem = MDItemCreate(nil, appPath as CFString),
+            let displayName = MDItemCopyAttribute(mdItem, kMDItemDisplayName) as? String,
+            displayName.hasMultiByteCharacters
+        {
+            return displayName
         }
 
         return nil
