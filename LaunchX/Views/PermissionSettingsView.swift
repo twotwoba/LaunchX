@@ -22,13 +22,12 @@ struct PermissionSettingsView: View {
                 }
             }
 
-            VStack(spacing: 8) {
+            // 三个权限一行显示
+            HStack(spacing: 12) {
                 PermissionBadge(
                     icon: "hand.raised.fill",
                     title: "辅助功能",
-                    description: "快捷键",
                     isGranted: permissionService.isAccessibilityGranted,
-                    isRequired: true,
                     action: {
                         if permissionService.isAccessibilityGranted {
                             permissionService.openAccessibilitySettings()
@@ -40,19 +39,15 @@ struct PermissionSettingsView: View {
 
                 PermissionBadge(
                     icon: "doc.fill",
-                    title: "完全磁盘访问",
-                    description: "文档搜索",
+                    title: "磁盘访问",
                     isGranted: permissionService.isFullDiskAccessGranted,
-                    isRequired: false,
                     action: { permissionService.requestFullDiskAccess() }
                 )
 
                 PermissionBadge(
                     icon: "rectangle.on.rectangle",
                     title: "屏幕录制",
-                    description: "窗口信息",
                     isGranted: permissionService.isScreenRecordingGranted,
-                    isRequired: false,
                     action: {
                         if permissionService.isScreenRecordingGranted {
                             permissionService.openScreenRecordingSettings()
@@ -84,52 +79,28 @@ struct PermissionSettingsView: View {
 struct PermissionBadge: View {
     let icon: String
     let title: String
-    let description: String
     let isGranted: Bool
-    let isRequired: Bool
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 10) {
-                // Icon
+            HStack(spacing: 6) {
                 Image(systemName: icon)
-                    .font(.system(size: 14))
+                    .font(.system(size: 12))
                     .foregroundColor(isGranted ? .green : .orange)
-                    .frame(width: 20)
 
-                // Title and description
-                VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 4) {
-                        Text(title)
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(.primary)
-                        if isRequired && !isGranted {
-                            Text("必需")
-                                .font(.system(size: 9, weight: .medium))
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 4)
-                                .padding(.vertical, 1)
-                                .background(Color.red.opacity(0.8))
-                                .cornerRadius(3)
-                        }
-                    }
-                    Text(description)
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                }
+                Text(title)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.primary)
 
-                Spacer()
-
-                // Status indicator
                 Image(
                     systemName: isGranted ? "checkmark.circle.fill" : "exclamationmark.circle.fill"
                 )
                 .foregroundColor(isGranted ? .green : .orange)
-                .font(.system(size: 16))
+                .font(.system(size: 12))
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
             .background(Color(nsColor: .windowBackgroundColor))
             .cornerRadius(6)
         }

@@ -50,7 +50,7 @@ struct GeneralSettingsView: View {
 
                 // 2. HotKey Configuration
                 HStack {
-                    Text("激活快捷键:")
+                    Text("启动快捷键:")
                     Spacer()
                     HotKeyRecorderView()
                 }

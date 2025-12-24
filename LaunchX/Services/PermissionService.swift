@@ -120,8 +120,15 @@ class PermissionService: ObservableObject {
     // MARK: - Screen Recording
 
     func requestScreenRecording() {
-        // 调用系统API显示权限弹窗
-        CGRequestScreenCaptureAccess()
+        // CGRequestScreenCaptureAccess() 只会在首次调用时显示弹窗
+        // 如果用户之前拒绝过，需要直接打开系统设置
+        // 先尝试调用系统API，如果没有弹窗则打开设置
+        let result = CGRequestScreenCaptureAccess()
+
+        // 如果返回 false 且权限未授予，说明需要手动去设置
+        if !result && !checkScreenRecordingSync() {
+            openSystemSettings(pane: "Privacy_ScreenCapture")
+        }
 
         // 立即检查一次权限状态
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
