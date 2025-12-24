@@ -42,7 +42,11 @@ class PanelManager: NSObject, NSWindowDelegate {
         guard isSetup else { return }
 
         if panel.isVisible && NSApp.isActive {
-            hidePanel(deactivateApp: true)
+            // 检查是否有其他窗口（如设置窗口）打开
+            let hasOtherVisibleWindows = NSApp.windows.contains { window in
+                window != panel && window.isVisible && !window.isKind(of: NSPanel.self)
+            }
+            hidePanel(deactivateApp: !hasOtherVisibleWindows)
         } else {
             showPanel()
         }
