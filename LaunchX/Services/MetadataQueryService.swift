@@ -517,6 +517,12 @@ class MetadataQueryService: ObservableObject {
                     (contentType == "public.folder" || contentType == "com.apple.mount-point")
                 let isApp = (contentType == "com.apple.application-bundle")
 
+                // Filter out apps without custom icons (system services like WiFiAgent, WindowManager)
+                // These are typically in /System/Library/CoreServices/ and not user-facing
+                if isApp && !appHasCustomIcon(at: path) {
+                    return
+                }
+
                 let indexedItem = IndexedItem(
                     name: name,
                     path: path,
@@ -612,6 +618,30 @@ class MetadataQueryService: ObservableObject {
             }
         }
     }
+}
+
+// MARK: - Helper Functions
+
+/// Check if an app has a custom icon defined in Info.plist
+/// Apps without icons (like system services in /System/Library/CoreServices/) return false
+func appHasCustomIcon(at path: String) -> Bool {
+    let infoPlistPath = path + "/Contents/Info.plist"
+    guard let infoPlistData = FileManager.default.contents(atPath: infoPlistPath),
+        let plist = try? PropertyListSerialization.propertyList(from: infoPlistData, format: nil)
+            as? [String: Any]
+    else {
+        return false
+    }
+
+    // Check for CFBundleIconFile or CFBundleIconName
+    if let iconFile = plist["CFBundleIconFile"] as? String, !iconFile.isEmpty {
+        return true
+    }
+    if let iconName = plist["CFBundleIconName"] as? String, !iconName.isEmpty {
+        return true
+    }
+
+    return false
 }
 
 // MARK: - Models

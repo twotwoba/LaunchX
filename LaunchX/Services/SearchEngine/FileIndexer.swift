@@ -306,6 +306,12 @@ final class FileIndexer {
 
         let isDirectory = resourceValues?.isDirectory ?? false
         let isApp = url.pathExtension == "app"
+
+        // Filter out apps without custom icons (system services like WiFiAgent, WindowManager)
+        if isApp && !appHasCustomIcon(at: url.path) {
+            return nil
+        }
+
         let modifiedDate = resourceValues?.contentModificationDate
         let fileSize = resourceValues?.fileSize ?? 0
 
@@ -354,6 +360,11 @@ final class FileIndexer {
     }
 
     private func createAppRecord(from url: URL) -> FileRecord? {
+        // Filter out apps without custom icons (system services like WiFiAgent, WindowManager)
+        if !appHasCustomIcon(at: url.path) {
+            return nil
+        }
+
         let resourceValues = try? url.resourceValues(forKeys: [.contentModificationDateKey])
 
         // Get localized display name (prefer Chinese localization, fallback to system display name)

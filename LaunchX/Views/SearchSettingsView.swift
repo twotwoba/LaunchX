@@ -423,6 +423,11 @@ class SearchSettingsViewModel: ObservableObject {
 
                 for appURL in contents {
                     if appURL.pathExtension == "app" {
+                        // Filter out apps without custom icons (system services)
+                        if !appHasCustomIcon(at: appURL.path) {
+                            continue
+                        }
+
                         // 获取本地化名称
                         let name =
                             self?.getLocalizedAppName(at: appURL.path)
