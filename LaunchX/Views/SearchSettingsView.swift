@@ -243,6 +243,9 @@ struct AppSearchSettingsView: View {
 struct ExclusionsSettingsView: View {
     @ObservedObject var viewModel: SearchSettingsViewModel
     @State private var showAddMenu = false
+    @State private var isPathsExpanded = false
+    @State private var isExtensionsExpanded = false
+    @State private var isFolderNamesExpanded = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -268,7 +271,7 @@ struct ExclusionsSettingsView: View {
 
             List {
                 // Excluded Paths
-                DisclosureGroup("按路径排除 (\(viewModel.excludedPaths.count))") {
+                DisclosureGroup(isExpanded: $isPathsExpanded) {
                     ForEach(viewModel.excludedPaths, id: \.self) { path in
                         HStack {
                             Image(systemName: "folder.badge.minus")
@@ -282,10 +285,17 @@ struct ExclusionsSettingsView: View {
                             .buttonStyle(.plain)
                         }
                     }
+                } label: {
+                    Text("按路径排除 (\(viewModel.excludedPaths.count))")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            withAnimation { isPathsExpanded.toggle() }
+                        }
                 }
 
                 // Excluded Extensions
-                DisclosureGroup("按后缀排除 (\(viewModel.excludedExtensions.count))") {
+                DisclosureGroup(isExpanded: $isExtensionsExpanded) {
                     ForEach(viewModel.excludedExtensions, id: \.self) { ext in
                         HStack {
                             Image(systemName: "doc.badge.minus")
@@ -299,10 +309,17 @@ struct ExclusionsSettingsView: View {
                             .buttonStyle(.plain)
                         }
                     }
+                } label: {
+                    Text("按后缀排除 (\(viewModel.excludedExtensions.count))")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            withAnimation { isExtensionsExpanded.toggle() }
+                        }
                 }
 
                 // Excluded Folder Names
-                DisclosureGroup("按文件夹名称排除 (\(viewModel.excludedFolderNames.count))") {
+                DisclosureGroup(isExpanded: $isFolderNamesExpanded) {
                     ForEach(viewModel.excludedFolderNames, id: \.self) { name in
                         HStack {
                             Image(systemName: "folder.badge.minus")
@@ -316,6 +333,13 @@ struct ExclusionsSettingsView: View {
                             .buttonStyle(.plain)
                         }
                     }
+                } label: {
+                    Text("按文件夹名称排除 (\(viewModel.excludedFolderNames.count))")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            withAnimation { isFolderNamesExpanded.toggle() }
+                        }
                 }
             }
             .listStyle(.bordered)
