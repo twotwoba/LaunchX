@@ -62,7 +62,7 @@ class SearchPanelViewController: NSViewController {
             glassEffectView.style = .clear
             glassEffectView.tintColor = NSColor(named: "PanelBackgroundColor")
             glassEffectView.wantsLayer = true
-            glassEffectView.layer?.cornerRadius = 16
+            glassEffectView.layer?.cornerRadius = 26
             glassEffectView.layer?.masksToBounds = true
             self.view = glassEffectView
             return
@@ -74,7 +74,7 @@ class SearchPanelViewController: NSViewController {
         visualEffectView.blendingMode = .behindWindow
         visualEffectView.state = .active
         visualEffectView.wantsLayer = true
-        visualEffectView.layer?.cornerRadius = 16
+        visualEffectView.layer?.cornerRadius = 26
         visualEffectView.layer?.masksToBounds = true
 
         self.view = visualEffectView
