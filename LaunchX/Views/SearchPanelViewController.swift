@@ -916,8 +916,9 @@ extension SearchPanelViewController: NSTableViewDelegate {
 
         let item = results[row]
         let isSelected = row == selectedIndex
-        // 在文件夹打开模式下隐藏箭头（不能再 Tab）
-        cellView?.configure(with: item, isSelected: isSelected, hideArrow: isInFolderOpenMode)
+        // 在文件夹打开模式或 IDE 项目模式下隐藏箭头（不能再 Tab）
+        cellView?.configure(
+            with: item, isSelected: isSelected, hideArrow: isInFolderOpenMode || isInIDEProjectMode)
 
         return cellView
     }
