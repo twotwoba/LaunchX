@@ -60,6 +60,7 @@ class SearchPanelViewController: NSViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        print("SearchPanelViewController: viewDidLoad called")
         setupUI()
         setupKeyboardMonitor()
         setupNotificationObservers()
@@ -95,16 +96,26 @@ class SearchPanelViewController: NSViewController {
 
     /// 处理直接进入 IDE 模式的通知
     @objc private func handleEnterIDEModeDirectly(_ notification: Notification) {
+        print("SearchPanelViewController: handleEnterIDEModeDirectly called")
+
         guard let userInfo = notification.userInfo,
             let idePath = userInfo["path"] as? String,
             let ideType = userInfo["ideType"] as? IDEType
         else {
+            print("SearchPanelViewController: Invalid notification userInfo")
             return
         }
 
+        print("SearchPanelViewController: IDE path=\(idePath), type=\(ideType)")
+
         // 获取该 IDE 的最近项目
         let projects = IDERecentProjectsService.shared.getRecentProjects(for: ideType, limit: 20)
-        guard !projects.isEmpty else { return }
+        print("SearchPanelViewController: Got \(projects.count) projects")
+
+        guard !projects.isEmpty else {
+            print("SearchPanelViewController: No projects found, returning")
+            return
+        }
 
         // 创建一个虚拟的 SearchResult 来表示 IDE 应用
         let icon = NSWorkspace.shared.icon(forFile: idePath)
@@ -136,6 +147,8 @@ class SearchPanelViewController: NSViewController {
         searchField.placeholderString = "搜索项目..."
         tableView.reloadData()
         updateVisibility()
+
+        print("SearchPanelViewController: IDE mode setup complete, results count=\(results.count)")
     }
 
     // MARK: - Setup
@@ -299,6 +312,12 @@ class SearchPanelViewController: NSViewController {
 
     /// 刷新显示模式（Simple/Full）
     private func refreshDisplayMode() {
+        // 如果在 IDE 项目模式或文件夹模式，不要覆盖当前显示的结果
+        if isInIDEProjectMode || isInFolderOpenMode {
+            updateVisibility()
+            return
+        }
+
         let defaultWindowMode =
             UserDefaults.standard.string(forKey: "defaultWindowMode") ?? "simple"
 
@@ -755,6 +774,11 @@ class SearchPanelViewController: NSViewController {
 
     /// 加载最近使用的应用
     private func loadRecentApps() {
+        // 如果已经在 IDE 项目模式或文件夹打开模式，不加载最近应用
+        if isInIDEProjectMode || isInFolderOpenMode {
+            return
+        }
+
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             var apps: [SearchResult] = []
             var addedPaths = Set<String>()
@@ -795,6 +819,11 @@ class SearchPanelViewController: NSViewController {
             }
 
             DispatchQueue.main.async {
+                // 再次检查是否在特殊模式，避免覆盖 IDE 项目列表
+                guard self?.isInIDEProjectMode != true && self?.isInFolderOpenMode != true else {
+                    return
+                }
+
                 self?.recentApps = apps
 
                 // 如果是 Full 模式且当前没有搜索内容，显示最近应用
