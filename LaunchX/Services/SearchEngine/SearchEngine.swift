@@ -349,12 +349,4 @@ final class SearchEngine: ObservableObject {
 
         return items.map { $0.toSearchResult() }
     }
-
-    /// Search using Trie (faster for prefix matching)
-    func searchWithTrie(text: String) -> [SearchResult] {
-        guard !text.isEmpty else { return [] }
-
-        let items = memoryIndex.searchWithTrie(query: text)
-        return items.map { $0.toSearchResult() }
-    }
 }

@@ -398,13 +398,14 @@ final class MemoryIndex {
             return lhs.item.modifiedDate > rhs.item.modifiedDate
         }
 
-        // 3. Search Files (limit iterations)
-        // 复制引用避免并发问题
+        // 3. Search Files
+        // 策略：先用 Trie 快速获取前缀匹配（无数量限制），再用线性扫描补充 contains 匹配
         let currentFiles = files
-        let maxFileIterations = min(currentFiles.count, 5000)
 
-        for i in 0..<maxFileIterations {
-            let file = currentFiles[i]
+        // 3a. 使用 Trie 获取前缀匹配的文件（突破 5000 限制）
+        let trieCandidates = getTrieCandidates(query: query)
+        for path in trieCandidates {
+            guard let file = allItems[path], !file.isApp, !file.isDirectory else { continue }
 
             // Apply exclusions
             if excludedPaths.contains(where: { file.path.hasPrefix($0) }) { continue }
@@ -419,15 +420,48 @@ final class MemoryIndex {
                 if !excludedFolderNames.isDisjoint(with: components) { continue }
             }
 
+            // Trie 匹配的都是前缀匹配
             if let matchType = file.matchesQuery(lowerQuery) {
                 matchedFiles.append((file, matchType))
-                if matchedFiles.count >= 20 { break }
-                continue
-            }
-
-            if queryIsAscii && file.matchesPinyin(lowerQuery) {
+            } else if queryIsAscii && file.matchesPinyin(lowerQuery) {
                 matchedFiles.append((file, .pinyin))
+            }
+        }
+
+        // 3b. 线性扫描补充 contains 匹配（仅在结果不足时）
+        if matchedFiles.count < 20 {
+            let maxFileIterations = min(currentFiles.count, 5000)
+            var scannedPaths = Set(matchedFiles.map { $0.item.path })
+
+            for i in 0..<maxFileIterations {
                 if matchedFiles.count >= 20 { break }
+
+                let file = currentFiles[i]
+
+                // 跳过已经通过 Trie 匹配的
+                if scannedPaths.contains(file.path) { continue }
+
+                // Apply exclusions
+                if excludedPaths.contains(where: { file.path.hasPrefix($0) }) { continue }
+
+                if !excludedExtensions.isEmpty {
+                    let ext = (file.path as NSString).pathExtension.lowercased()
+                    if excludedExtensions.contains(ext) { continue }
+                }
+
+                if !excludedFolderNames.isEmpty {
+                    let components = file.path.components(separatedBy: "/")
+                    if !excludedFolderNames.isDisjoint(with: components) { continue }
+                }
+
+                if let matchType = file.matchesQuery(lowerQuery) {
+                    matchedFiles.append((file, matchType))
+                    continue
+                }
+
+                if queryIsAscii && file.matchesPinyin(lowerQuery) {
+                    matchedFiles.append((file, .pinyin))
+                }
             }
         }
 
@@ -440,45 +474,62 @@ final class MemoryIndex {
         }
 
         // Combine results: apps -> directories -> files
-        let topApps = matchedApps.prefix(10).map { $0.item }
-        let topDirs = matchedDirs.prefix(10).map { $0.item }
-        let topFiles = matchedFiles.prefix(10).map { $0.item }
+        // 使用 Set 去重，避免重复显示
+        var seenPaths = Set<String>()
+        var results: [SearchItem] = []
+        results.reserveCapacity(30)
 
-        return Array(topApps) + Array(topDirs) + Array(topFiles)
+        for item in matchedApps.prefix(10).map({ $0.item }) {
+            if seenPaths.insert(item.path).inserted {
+                results.append(item)
+            }
+        }
+
+        for item in matchedDirs.prefix(10).map({ $0.item }) {
+            if seenPaths.insert(item.path).inserted {
+                results.append(item)
+            }
+        }
+
+        for item in matchedFiles.prefix(10).map({ $0.item }) {
+            if seenPaths.insert(item.path).inserted {
+                results.append(item)
+            }
+        }
+
+        return results
     }
 
-    /// Search using Trie for prefix matching (even faster for prefix queries)
-    func searchWithTrie(query: String, maxResults: Int = 30) -> [SearchItem] {
-        guard !query.isEmpty else { return [] }
-
+    /// 使用 Trie 快速获取前缀匹配的候选项
+    /// 内部使用，用于加速搜索
+    private func getTrieCandidates(query: String) -> Set<String> {
         let lowerQuery = query.lowercased()
-        var results: [SearchItem] = []
+        var candidatePaths = Set<String>()
 
-        // Search name trie
+        // 从 name trie 获取候选
         if let items = searchTrie(nameTrie, prefix: lowerQuery) {
-            results.append(contentsOf: items)
+            for item in items {
+                candidatePaths.insert(item.path)
+            }
         }
 
-        // Search pinyin trie if query is ASCII
+        // 从 pinyin trie 获取候选（仅 ASCII 查询）
         if query.allSatisfy({ $0.isASCII }) {
             if let items = searchTrie(pinyinTrie, prefix: lowerQuery) {
-                results.append(contentsOf: items)
+                for item in items {
+                    candidatePaths.insert(item.path)
+                }
             }
         }
 
-        // Deduplicate and sort
-        var seen = Set<String>()
-        results = results.filter { seen.insert($0.path).inserted }
-
-        // Sort: apps first, then by name length
-        results.sort { lhs, rhs in
-            if lhs.isApp != rhs.isApp {
-                return lhs.isApp
+        // 从 alias trie 获取候选
+        if let items = searchTrie(aliasTrie, prefix: lowerQuery) {
+            for item in items {
+                candidatePaths.insert(item.path)
             }
-            return lhs.name.count < rhs.name.count
         }
 
-        return Array(results.prefix(maxResults))
+        return candidatePaths
     }
 
     // MARK: - Trie Operations
