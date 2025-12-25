@@ -375,6 +375,12 @@ struct MainHotKeyRecorderPopover: View {
 
             let keyCode = UInt32(event.keyCode)
 
+            // 禁止使用 Cmd+, (系统设置快捷键)
+            if keyCode == UInt32(kVK_ANSI_Comma) && modifiers == UInt32(cmdKey) {
+                conflictMessage = "系统设置"
+                return nil
+            }
+
             // 检查冲突（排除当前主快捷键本身）
             if let conflict = hotKeyService.checkConflict(
                 keyCode: keyCode, modifiers: modifiers, excludingMainHotKey: true)
