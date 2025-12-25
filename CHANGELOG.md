@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.0.7
+
+### 新功能
+- 增加了对macos 26 LiquidGlass 的支持
+
 ## v0.0.6
 
 ### 修复
