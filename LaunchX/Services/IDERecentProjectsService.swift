@@ -166,6 +166,7 @@ final class IDERecentProjectsService {
         }
 
         var projects: [IDEProject] = []
+        var seenPaths = Set<String>()  // 用于去重
 
         for entry in entries {
             guard projects.count < limit else { break }
@@ -185,10 +186,13 @@ final class IDERecentProjectsService {
             }
 
             guard let projectPath = path,
+                !seenPaths.contains(projectPath),
                 FileManager.default.fileExists(atPath: projectPath)
             else {
                 continue
             }
+
+            seenPaths.insert(projectPath)
 
             let name = (projectPath as NSString).lastPathComponent
             projects.append(
@@ -245,6 +249,7 @@ final class IDERecentProjectsService {
 
     private func parseZedRecentProjects(_ output: String, limit: Int) -> [IDEProject] {
         var projects: [IDEProject] = []
+        var seenPaths = Set<String>()  // 用于去重
         let lines = output.components(separatedBy: "\n")
 
         let dateFormatter = DateFormatter()
@@ -258,7 +263,13 @@ final class IDERecentProjectsService {
             guard parts.count >= 1 else { continue }
 
             let path = parts[0]
+
+            // 去重：跳过已经添加过的路径
+            guard !seenPaths.contains(path) else { continue }
+
             guard FileManager.default.fileExists(atPath: path) else { continue }
+
+            seenPaths.insert(path)
 
             var lastOpened: Date? = nil
             if parts.count >= 2 {
@@ -334,6 +345,7 @@ final class IDERecentProjectsService {
         }
 
         var projects: [IDEProject] = []
+        var seenPaths = Set<String>()  // 用于去重
 
         // 简单的 XML 解析，查找 recentPaths 中的路径
         // JetBrains 使用 $USER_HOME$ 作为 home 目录占位符
@@ -359,8 +371,13 @@ final class IDERecentProjectsService {
             // 替换 $USER_HOME$
             path = path.replacingOccurrences(of: "$USER_HOME$", with: homeDir)
 
+            // 去重：跳过已经添加过的路径
+            guard !seenPaths.contains(path) else { continue }
+
             // 跳过非目录路径
             guard FileManager.default.fileExists(atPath: path) else { continue }
+
+            seenPaths.insert(path)
 
             let name = (path as NSString).lastPathComponent
             projects.append(
