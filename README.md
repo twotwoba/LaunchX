@@ -3,7 +3,18 @@
 
 ---
 
-TODO LIST:
+### 安装说明
+- 从 releases 下载 LaunchX-vX.X.X-arm64.dmg 或 LaunchX-vX.X.X-arm64.zip
+- 打开 DMG 并将 LaunchX 拖入 Applications，或解压 ZIP 后移动到 Applications
+- 启动 LaunchX 并授予必要的权限
+- 默认使用 `Option + Space` 激活搜索
+
+### 系统要求
+- macOS 13.0 或更高版本
+- Apple Silicon (M1/M2/M3/M4)
+> ⚠️ 本版本仅支持 Apple Silicon Mac，不支持 Intel Mac
+
+### TODO
 
 - [x] high - Implement search performance
 - [x] high - fix high cpu percent

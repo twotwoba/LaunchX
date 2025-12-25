@@ -86,20 +86,6 @@ jobs:
                     echo "## LaunchX ${VERSION}" >> $GITHUB_OUTPUT
                   fi
 
-                  echo "" >> $GITHUB_OUTPUT
-                  echo "---" >> $GITHUB_OUTPUT
-                  echo "" >> $GITHUB_OUTPUT
-                  echo "### 安装说明" >> $GITHUB_OUTPUT
-                  echo "1. 下载 \`LaunchX-${VERSION}-arm64.dmg\` 或 \`LaunchX-${VERSION}-arm64.zip\`" >> $GITHUB_OUTPUT
-                  echo "2. 打开 DMG 并将 LaunchX 拖入 Applications，或解压 ZIP 后移动到 Applications" >> $GITHUB_OUTPUT
-                  echo "3. 启动 LaunchX 并授予必要的权限" >> $GITHUB_OUTPUT
-                  echo "4. 使用 \`Option + Space\` 激活搜索" >> $GITHUB_OUTPUT
-                  echo "" >> $GITHUB_OUTPUT
-                  echo "### 系统要求" >> $GITHUB_OUTPUT
-                  echo "- macOS 13.0 或更高版本" >> $GITHUB_OUTPUT
-                  echo "- Apple Silicon (M1/M2/M3/M4)" >> $GITHUB_OUTPUT
-                  echo "" >> $GITHUB_OUTPUT
-                  echo "> ⚠️ 本版本仅支持 Apple Silicon Mac，不支持 Intel Mac" >> $GITHUB_OUTPUT
                   echo "EOF" >> $GITHUB_OUTPUT
 
             - name: Create Release
