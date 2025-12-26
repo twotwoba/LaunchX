@@ -404,6 +404,13 @@ struct ToolItemRow: View {
             .onAppear {
                 aliasText = tool.alias ?? ""
             }
+            .onChange(of: tool.alias) { _, newValue in
+                // 当 tool.alias 被外部更新时（如编辑弹窗），同步更新本地状态
+                let newAlias = newValue ?? ""
+                if aliasText != newAlias {
+                    aliasText = newAlias
+                }
+            }
             .onChange(of: aliasText) { _, newValue in
                 var updatedTool = tool
                 updatedTool.alias = newValue.isEmpty ? nil : newValue

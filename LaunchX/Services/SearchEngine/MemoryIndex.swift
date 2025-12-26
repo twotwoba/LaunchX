@@ -363,12 +363,14 @@ final class MemoryIndex {
         matchedFiles.reserveCapacity(20)
 
         // 0. 先搜索别名（最高优先级）
+        // 工具类（网页直达、实用工具、系统命令）通过别名搜索时也应该排在前面
         let aliasResults = searchByAliasInternal(lowerQuery)
         for item in aliasResults {
             if excludedApps.contains(item.path) { continue }
             aliasMatched.insert(item.path)
 
-            if item.isApp {
+            // 工具类（网页直达等）和应用都放入 matchedApps，以便优先显示
+            if item.isApp || item.isWebLink {
                 matchedApps.append((item, .exact))  // 别名匹配视为精确匹配
             } else if item.isDirectory {
                 matchedDirs.append((item, .exact))

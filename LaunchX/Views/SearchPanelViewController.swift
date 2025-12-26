@@ -1027,6 +1027,8 @@ extension SearchPanelViewController: NSTableViewDelegate {
 class ResultCellView: NSView {
     private let iconView = NSImageView()
     private let nameLabel = NSTextField(labelWithString: "")
+    private let aliasLabel = NSTextField(labelWithString: "")  // 别名标签
+    private let aliasBadgeView = NSView()  // 别名背景视图
     private let pathLabel = NSTextField(labelWithString: "")
     private let backgroundView = NSView()
     private let arrowIndicator = NSImageView()  // IDE 箭头指示器
@@ -1062,7 +1064,24 @@ class ResultCellView: NSView {
         nameLabel.font = .systemFont(ofSize: 13, weight: .medium)
         nameLabel.lineBreakMode = .byTruncatingTail
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
+        nameLabel.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+        nameLabel.setContentHuggingPriority(.defaultHigh, for: .horizontal)
         addSubview(nameLabel)
+
+        // Alias badge background (圆角背景) - 紧跟在名称后面
+        aliasBadgeView.wantsLayer = true
+        aliasBadgeView.layer?.cornerRadius = 4
+        aliasBadgeView.layer?.backgroundColor = NSColor.systemGray.withAlphaComponent(0.25).cgColor
+        aliasBadgeView.translatesAutoresizingMaskIntoConstraints = false
+        aliasBadgeView.isHidden = true
+        addSubview(aliasBadgeView)
+
+        // Alias label
+        aliasLabel.font = .monospacedSystemFont(ofSize: 10, weight: .medium)
+        aliasLabel.textColor = .secondaryLabelColor
+        aliasLabel.translatesAutoresizingMaskIntoConstraints = false
+        aliasLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        addSubview(aliasLabel)
 
         // Path
         pathLabel.font = .systemFont(ofSize: 11)
@@ -1080,13 +1099,14 @@ class ResultCellView: NSView {
         arrowIndicator.isHidden = true
         addSubview(arrowIndicator)
 
-        // 创建两种布局约束
+        // 创建布局约束
         nameLabelTopConstraint = nameLabel.topAnchor.constraint(equalTo: topAnchor, constant: 6)
         nameLabelCenterYConstraint = nameLabel.centerYAnchor.constraint(equalTo: centerYAnchor)
+        // 名称的 trailing 约束（用于没有别名时限制宽度）
         nameLabelTrailingToArrow = nameLabel.trailingAnchor.constraint(
-            equalTo: arrowIndicator.leadingAnchor, constant: -8)
+            lessThanOrEqualTo: arrowIndicator.leadingAnchor, constant: -8)
         nameLabelTrailingToEdge = nameLabel.trailingAnchor.constraint(
-            equalTo: trailingAnchor, constant: -20)
+            lessThanOrEqualTo: trailingAnchor, constant: -20)
 
         NSLayoutConstraint.activate([
             backgroundView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
@@ -1102,6 +1122,16 @@ class ResultCellView: NSView {
             nameLabel.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 12),
             nameLabelTopConstraint,
 
+            // Alias badge - 紧跟在名称后面
+            aliasBadgeView.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 8),
+            aliasBadgeView.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
+
+            aliasLabel.leadingAnchor.constraint(equalTo: aliasBadgeView.leadingAnchor, constant: 6),
+            aliasLabel.trailingAnchor.constraint(
+                equalTo: aliasBadgeView.trailingAnchor, constant: -6),
+            aliasLabel.topAnchor.constraint(equalTo: aliasBadgeView.topAnchor, constant: 2),
+            aliasLabel.bottomAnchor.constraint(equalTo: aliasBadgeView.bottomAnchor, constant: -2),
+
             // Arrow indicator
             arrowIndicator.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -20),
             arrowIndicator.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -1109,19 +1139,22 @@ class ResultCellView: NSView {
             arrowIndicator.heightAnchor.constraint(equalToConstant: 16),
 
             pathLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
-            pathLabel.trailingAnchor.constraint(equalTo: nameLabel.trailingAnchor),
+            pathLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -20),
             pathLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 2),
         ])
     }
 
     func configure(with item: SearchResult, isSelected: Bool, hideArrow: Bool = false) {
         iconView.image = item.icon
+        nameLabel.stringValue = item.name
 
-        // 显示名称，如果有别名则添加别名标签
+        // 显示别名标签（badge 样式，紧跟在名称后面）
         if let alias = item.displayAlias, !alias.isEmpty {
-            nameLabel.stringValue = "\(item.name) [\(alias)]"
+            aliasLabel.stringValue = alias
+            aliasBadgeView.isHidden = false
         } else {
-            nameLabel.stringValue = item.name
+            aliasLabel.stringValue = ""
+            aliasBadgeView.isHidden = true
         }
 
         // App 和网页直达只显示名称（垂直居中、字体大），文件和文件夹显示路径
@@ -1163,11 +1196,18 @@ class ResultCellView: NSView {
             nameLabel.textColor = .white
             pathLabel.textColor = .white.withAlphaComponent(0.8)
             arrowIndicator.contentTintColor = .white.withAlphaComponent(0.8)
+            // 别名标签在选中时的样式
+            aliasLabel.textColor = .white.withAlphaComponent(0.9)
+            aliasBadgeView.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.2).cgColor
         } else {
             backgroundView.layer?.backgroundColor = NSColor.clear.cgColor
             nameLabel.textColor = .labelColor
             pathLabel.textColor = .secondaryLabelColor
             arrowIndicator.contentTintColor = .secondaryLabelColor
+            // 别名标签在未选中时的样式
+            aliasLabel.textColor = .secondaryLabelColor
+            aliasBadgeView.layer?.backgroundColor =
+                NSColor.systemGray.withAlphaComponent(0.25).cgColor
         }
     }
 }
