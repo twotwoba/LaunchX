@@ -112,13 +112,6 @@ struct ToolsConfig: Codable {
                 showInSearchPanel: true
             ),
             ToolItem.webLink(
-                name: "Bing",
-                url: "https://cn.bing.com/search?q={query}&search=&form=QBLH",
-                alias: "bi",
-                iconData: loadIconData(named: "WebLink_bing"),
-                showInSearchPanel: true
-            ),
-            ToolItem.webLink(
                 name: "GitHub",
                 url: "https://www.github.com/search?q={query}",
                 alias: "gh",
