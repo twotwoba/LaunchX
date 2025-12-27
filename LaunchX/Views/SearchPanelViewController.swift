@@ -253,9 +253,9 @@ class SearchPanelViewController: NSViewController {
 
         // Constraints
         NSLayoutConstraint.activate([
-            // IDE Tag View
+            // IDE Tag View - 与搜索框垂直居中对齐，微调 +3 补偿视觉偏差
             ideTagView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
-            ideTagView.centerYAnchor.constraint(equalTo: view.topAnchor, constant: 40),
+            ideTagView.centerYAnchor.constraint(equalTo: searchField.centerYAnchor, constant: -3),
             ideTagView.heightAnchor.constraint(equalToConstant: 28),
 
             ideIconView.leadingAnchor.constraint(equalTo: ideTagView.leadingAnchor, constant: 6),
