@@ -399,6 +399,14 @@ struct ToolItemRow: View {
                         .lineLimit(1)
                         .truncationMode(.tail)
                 }
+
+                // 显示在搜索面板的标识
+                if tool.showInSearchPanel == true {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                        .help("已配置为默认搜索")
+                }
             }
             .frame(minWidth: 180, maxWidth: .infinity, alignment: .leading)
 
