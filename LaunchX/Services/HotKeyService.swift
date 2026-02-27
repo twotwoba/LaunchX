@@ -985,16 +985,9 @@ class HotKeyService: ObservableObject {
         if useDoubleTapModifier {
             startDoubleTapMonitoring()
             print("HotKeyService: Resumed double-tap modifier")
-        } else if currentKeyCode != 0 {
-            let hotKeyID = EventHotKeyID(signature: hotKeySignature, id: mainHotKeyId)
-            RegisterEventHotKey(
-                currentKeyCode,
-                currentModifiers,
-                hotKeyID,
-                GetApplicationEventTarget(),
-                0,
-                &mainHotKeyRef
-            )
+        } else if currentKeyCode != 0 && currentModifiers != 0 {
+            // 使用 registerMainHotKey 方法来确保正确处理旧引用
+            registerMainHotKey(keyCode: currentKeyCode, modifiers: currentModifiers)
             print("HotKeyService: Resumed main hotkey")
         }
 

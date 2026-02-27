@@ -1,5 +1,8 @@
 # Changelog
 
+## v0.2.18
+- 修复自定义启动快捷键清除失效的问题
+
 ## v0.2.17
 - 支持自定义终端工具，Ghostty、iTerm2、Warp等
 - 新增默认排除文件夹：`assets`,`sdk`
