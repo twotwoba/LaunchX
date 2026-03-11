@@ -7,6 +7,7 @@ on:
 
 permissions:
     contents: write
+    pull-requests: write
 
 jobs:
     build:
@@ -248,35 +249,52 @@ jobs:
                   echo "Appcast.xml created successfully:"
                   cat appcast.xml
 
-            - name: Commit and Push Version Changes
+            - name: Create PR for Version Changes
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               run: |
                   VERSION="${{ github.ref_name }}"
+                  BRANCH_NAME="release/${VERSION}"
 
                   git config --local user.email "github-actions[bot]@users.noreply.github.com"
                   git config --local user.name "github-actions[bot]"
 
-                  # 备份已修改的文件，避免检出分支时冲突
+                  # 备份已修改的文件
                   cp appcast.xml appcast.xml.tmp
                   cp LaunchX.xcodeproj/project.pbxproj project.pbxproj.tmp
 
-                  # 切换到 main 分支（当前在 tag 的 detached HEAD 状态）
+                  # 切换到 main 分支并创建新分支
                   git checkout .
                   git fetch origin main
                   git checkout main
                   git pull origin main
+                  git checkout -b "$BRANCH_NAME"
 
                   # 还原备份的文件
                   mv appcast.xml.tmp appcast.xml
                   mv project.pbxproj.tmp LaunchX.xcodeproj/project.pbxproj
 
-                  # Add appcast and the project file with updated version
+                  # 添加更改
                   git add appcast.xml
                   git add LaunchX.xcodeproj/project.pbxproj || echo "Project file not found"
 
-                  # Check if there are changes to commit
+                  # 检查是否有更改
                   if git diff --staged --quiet; then
                     echo "No changes to commit"
-                  else
-                    git commit -m "chore: bump version to ${VERSION} and update appcast"
-                    git push origin main
+                    exit 0
                   fi
+
+                  # 提交并推送到新分支
+                  git commit -m "chore: bump version to ${VERSION} and update appcast"
+                  git push origin "$BRANCH_NAME"
+
+                  # 创建 PR
+                  gh pr create \
+                    --title "chore: bump version to ${VERSION} and update appcast" \
+                    --body "Auto-generated PR to update version and appcast for release ${VERSION}" \
+                    --base main \
+                    --head "$BRANCH_NAME"
+
+                  # 等待 PR 创建完成并自动合并
+                  sleep 5
+                  gh pr merge "$BRANCH_NAME" --auto --squash --delete-branch
