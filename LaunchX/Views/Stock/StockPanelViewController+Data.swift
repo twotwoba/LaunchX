@@ -48,109 +48,58 @@ extension StockPanelViewController: NSTextViewDelegate {
             !raw.isEmpty
         else { return }
 
-        let queries = StockQueryParser.parse(raw)
-        guard !queries.isEmpty else {
-            renderErrorCard("无法解析输入，示例：600519 或 贵州茅台-20240115")
+        guard let query = StockQueryParser.parse(raw) else {
+            chartView?.showError("无法解析输入，示例：600519 或 贵州茅台")
             return
         }
 
-        // 取消上一次查询
+        // 取消上一次查询；新查询时图表重新铺满面板（折叠 AI 区）
         queryTask?.cancel()
+        setChartExpanded(true)
         setLoading(true)
-        clearDataCards()
+        chartView?.showHint("正在查询…")
         setAIPlaceholder("")
 
         queryTask = Task { [weak self] in
             guard let self = self else { return }
-            var results: [StockDataBundle] = []
+            var bundle: StockDataBundle? = nil
             var errorMsg: String? = nil
-            for q in queries {
-                if Task.isCancelled { return }
-                do {
-                    let bundle = try await StockDataService.shared.fetchBundle(q)
-                    results.append(bundle)
-                } catch let e as StockError {
-                    if case .multipleCandidates(let cands) = e {
-                        errorMsg = "「\(q.name ?? q.input)」匹配到多个：\n" +
-                            cands.map { "  \($0.code) \($0.name)（\($0.marketName)）" }
+            do {
+                try Task.checkCancellation()
+                bundle = try await StockDataService.shared.fetchBundle(query)
+            } catch let e as StockError {
+                if case .multipleCandidates(let cands) = e {
+                    errorMsg = "「\(query.name ?? query.input)」匹配到多个：\n" +
+                        cands.map { "  \($0.code) \($0.name)（\($0.marketName)）" }
                             .joined(separator: "\n") + "\n请用更精确的代码/名称。"
-                    } else {
-                        errorMsg = "查询「\(q.name ?? q.input)」失败：\(e.localizedDescription)"
-                    }
-                } catch {
-                    errorMsg = "查询「\(q.name ?? q.input)」失败：\(error.localizedDescription)"
+                } else {
+                    errorMsg = "查询「\(query.name ?? query.input)」失败：\(e.localizedDescription)"
                 }
+            } catch is CancellationError {
+                return
+            } catch {
+                errorMsg = "查询「\(query.name ?? query.input)」失败：\(error.localizedDescription)"
             }
             await MainActor.run {
-                self.bundles = results
-                self.renderDataCards(results)
-                if results.isEmpty, let m = errorMsg { self.renderErrorCard(m) }
+                self.bundles = bundle.map { [$0] } ?? []
+                self.renderChart(bundle: bundle, errorMsg: errorMsg)
                 self.setLoading(false)
             }
         }
     }
 
-    // MARK: - 渲染数据卡
+    // MARK: - 渲染图表
 
-    func renderDataCards(_ bundles: [StockDataBundle]) {
-        guard let stack = dataStackView else { return }
-        clearDataCards()
-        if bundles.isEmpty {
-            let empty = makeHint("输入股票后点「查询」获取数据")
-            stack.addArrangedSubview(empty)
-            empty.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-            return
+    func renderChart(bundle: StockDataBundle?, errorMsg: String?) {
+        guard let chart = chartView else { return }
+        if let bundle = bundle {
+            chart.update(bars: bundle.chartBars)
+        } else if let m = errorMsg {
+            chart.showError(m)
         }
-        for (i, b) in bundles.enumerated() {
-            let card = StockDataCellView(bundle: b)
-            stack.addArrangedSubview(card)
-            card.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-            if i < bundles.count - 1 {
-                let sep = makeSeparator()
-                stack.addArrangedSubview(sep)
-                sep.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-            }
-        }
-    }
-
-    func renderErrorCard(_ message: String) {
-        guard let stack = dataStackView else { return }
-        clearDataCards()
-        let label = NSTextField(wrappingLabelWithString: message)
-        label.font = .systemFont(ofSize: 13)
-        label.textColor = .systemRed
-        label.translatesAutoresizingMaskIntoConstraints = false
-        let wrapper = NSView()
-        wrapper.translatesAutoresizingMaskIntoConstraints = false
-        wrapper.addSubview(label)
-        NSLayoutConstraint.activate([
-            label.topAnchor.constraint(equalTo: wrapper.topAnchor, constant: 14),
-            label.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor, constant: 14),
-            label.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor, constant: -14),
-            label.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor, constant: -14),
-        ])
-        stack.addArrangedSubview(wrapper)
-        wrapper.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-    }
-
-    func clearDataCards() {
-        guard let stack = dataStackView else { return }
-        for v in stack.arrangedSubviews {
-            stack.removeArrangedSubview(v)
-            v.removeFromSuperview()
-        }
-        let hint = makeHint("正在查询…")
-        stack.addArrangedSubview(hint)
-        hint.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
     }
 
     // MARK: - 导出
-
-    @objc func copyJSON() {
-        guard !bundles.isEmpty else { return }
-        StockExporter.copyJSON(bundles: bundles)
-        flashButton(copyJSONButton)
-    }
 
     @objc func copyCSV() {
         guard !bundles.isEmpty else { return }
@@ -164,7 +113,6 @@ extension StockPanelViewController: NSTextViewDelegate {
         guard let indicator = loadingIndicator else { return }
         indicator.isHidden = !loading
         if loading { indicator.startAnimation(nil) } else { indicator.stopAnimation(nil) }
-        queryButton?.isEnabled = !loading
     }
 
     func setAIPlaceholder(_ text: String) {
@@ -179,32 +127,5 @@ extension StockPanelViewController: NSTextViewDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
             button.title = original
         }
-    }
-
-    // MARK: - 小视图工厂
-
-    func makeHint(_ text: String) -> NSView {
-        let label = NSTextField(labelWithString: text)
-        label.font = .systemFont(ofSize: 12)
-        label.textColor = .tertiaryLabelColor
-        label.translatesAutoresizingMaskIntoConstraints = false
-        let wrapper = NSView()
-        wrapper.translatesAutoresizingMaskIntoConstraints = false
-        wrapper.addSubview(label)
-        NSLayoutConstraint.activate([
-            label.topAnchor.constraint(equalTo: wrapper.topAnchor, constant: 14),
-            label.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor, constant: 12),
-            label.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor, constant: -14),
-        ])
-        return wrapper
-    }
-
-    func makeSeparator() -> NSView {
-        let sep = NSView()
-        sep.wantsLayer = true
-        sep.layer?.backgroundColor = NSColor.separatorColor.cgColor
-        sep.translatesAutoresizingMaskIntoConstraints = false
-        sep.heightAnchor.constraint(equalToConstant: 1).isActive = true
-        return sep
     }
 }

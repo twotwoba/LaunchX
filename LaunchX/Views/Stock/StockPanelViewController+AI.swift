@@ -18,6 +18,7 @@ extension StockPanelViewController {
         }
 
         analyzeTask?.cancel()
+        setChartExpanded(false)  // 图表上移，下方展示 AI 分析
         setAIPlaceholder("")
         agentEventLabel?.stringValue = ""
         setLoading(true)

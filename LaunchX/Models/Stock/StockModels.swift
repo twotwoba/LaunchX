@@ -133,16 +133,18 @@ struct StockDataBundle: Codable, Hashable, Identifiable {
     let targetDate: String?  // nil=最新
     let snapshot: StockSnapshot?
     let indicators: StockIndicators?
-    let bars: [StockDailyBar]  // 回看窗口（用于 AI 看趋势）
+    let bars: [StockDailyBar]  // 回看窗口（用于 AI 看趋势，近 20 根）
     let capitalFlows: [StockCapitalFlow]
     let fundamentals: StockFundamentals?
     let note: String?  // 缺失/降级提示
+    let chartBars: [StockDailyBar]  // K 线图全量（约一年）
 
     init(
         id: UUID = UUID(), input: String, code: String, name: String, secid: String,
         targetDate: String?, snapshot: StockSnapshot?, indicators: StockIndicators?,
         bars: [StockDailyBar], capitalFlows: [StockCapitalFlow],
-        fundamentals: StockFundamentals?, note: String? = nil
+        fundamentals: StockFundamentals?, note: String? = nil,
+        chartBars: [StockDailyBar] = []
     ) {
         self.id = id
         self.input = input
@@ -156,6 +158,7 @@ struct StockDataBundle: Codable, Hashable, Identifiable {
         self.capitalFlows = capitalFlows
         self.fundamentals = fundamentals
         self.note = note
+        self.chartBars = chartBars.isEmpty ? bars : chartBars
     }
 }
 

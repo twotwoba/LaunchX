@@ -11,7 +11,6 @@ class StockPanelViewController: NSViewController {
     var visualEffectView: NSVisualEffectView?
     var glassEffectView: NSView?
     var titleBar: NSView?
-    var titleLabel: NSTextField?
     var pinButton: NSButton?
 
     // 输入区
@@ -20,21 +19,22 @@ class StockPanelViewController: NSViewController {
     var inputPlaceholder: NSTextField?
     var inputHeightConstraint: NSLayoutConstraint?
 
-    // 操作条
-    var modeSegmented: NSSegmentedControl?
+    // 输入行右侧控件
     var templatePopup: NSPopUpButton?
-    var queryButton: NSButton?
     var analyzeButton: NSButton?
-    var copyJSONButton: NSButton?
     var copyCSVButton: NSButton?
 
     // 内容分栏
     var contentDivider: NSView?
-    var dataScrollView: NSScrollView?
-    var dataStackView: NSStackView?
+    var chartView: StockChartView?
     var aiScrollView: NSScrollView?
     var aiTextView: NSTextView?
     var agentEventLabel: NSTextField?  // B 模式工具进度
+
+    // 图表铺满 ⇄ 收缩给 AI 让位的两套约束
+    var chartExpandedConstraints: [NSLayoutConstraint] = []
+    var aiAreaConstraints: [NSLayoutConstraint] = []
+    var chartExpanded = true
 
     var loadingIndicator: NSProgressIndicator?
     var disclaimerLabel: NSTextField?

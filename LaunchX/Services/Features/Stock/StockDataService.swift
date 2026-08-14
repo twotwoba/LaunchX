@@ -251,7 +251,7 @@ final class StockDataService {
         let prefix = parts[0] == "1" ? "sh" : "sz"
         let symbol = "\(prefix)\(parts[1])"
         let url =
-            "https://quotes.sina.cn/cn/api/json_v2.php/CN_MarketDataService.getKLineData?symbol=\(symbol)&scale=240&ma=no&datalen=130"
+            "https://quotes.sina.cn/cn/api/json_v2.php/CN_MarketDataService.getKLineData?symbol=\(symbol)&scale=240&ma=no&datalen=250"
         guard let data = try? await get(url, referer: "https://finance.sina.com.cn/"),
             let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]
         else { return [] }
@@ -350,7 +350,7 @@ final class StockDataService {
         var bars: [StockDailyBar] = []
         var historyNote: String? = nil
         do {
-            bars = try await fetchHistory(secid: secid, endYYYYMMdd: endStr, lmt: 130)
+            bars = try await fetchHistory(secid: secid, endYYYYMMdd: endStr, lmt: 250)
         } catch {
             bars = await fetchHistoryViaSina(secid: secid, targetDate: resolved.targetDate)
             if !bars.isEmpty {
@@ -435,7 +435,8 @@ final class StockDataService {
             secid: secid, targetDate: resolved.targetDate,
             snapshot: snapshot, indicators: indicators,
             bars: Array(bars.suffix(20)),  // 仅保留近 20 日供 AI 看趋势，控制体积
-            capitalFlows: capitalFlows, fundamentals: fundamentalsVal, note: note)
+            capitalFlows: capitalFlows, fundamentals: fundamentalsVal, note: note,
+            chartBars: bars)
     }
 
     private func snapshotFromBar(
