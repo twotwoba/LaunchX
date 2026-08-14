@@ -944,6 +944,13 @@ extension SearchPanelViewController {
             return
         }
 
+        // 股票面板入口：打开股票面板
+        if item.isStockEntry {
+            PanelManager.shared.hidePanel()
+            StockPanelManager.shared.showPanel()
+            return
+        }
+
         // Claude Code 模式：处理选中项（切换 Provider/MCP/Skill）
         if isInClaudeCodeMode, item.isClaudeCodeItem {
             handleClaudeCodeItemSelected(item)

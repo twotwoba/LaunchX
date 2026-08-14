@@ -151,6 +151,7 @@ extension SearchPanelViewController {
         let twoFAEntryResult = check2FAAliasMatch(query: query)
         let claudeCodeEntryResult = checkClaudeCodeAliasMatch(query: query)
         let codexEntryResult = checkCodexAliasMatch(query: query)
+        let stockEntryResult = checkStockAliasMatch(query: query)
 
         // 根据 LRU 对搜索结果重新排序（传入查询字符串用于别名匹配优先级）
         let sortedResults = sortSearchResults(searchResults, query: query)
@@ -161,6 +162,7 @@ extension SearchPanelViewController {
         if let twoFAEntry = twoFAEntryResult { finalResults.append(twoFAEntry) }
         if let claudeCodeEntry = claudeCodeEntryResult { finalResults.append(claudeCodeEntry) }
         if let codexEntry = codexEntryResult { finalResults.append(codexEntry) }
+        if let stockEntry = stockEntryResult { finalResults.append(stockEntry) }
 
         if sortedResults.isEmpty {
             // 没有搜索结果时，默认搜索显示在最上面
@@ -320,6 +322,33 @@ extension SearchPanelViewController {
             isDirectory: false,
             displayAlias: settings.alias,
             isCodexEntry: true
+        )
+    }
+
+    /// 股票面板别名匹配
+    func checkStockAliasMatch(query: String) -> SearchResult? {
+        let settings = searchEngine.cachedStockSettings
+        guard settings.isEnabled, !settings.alias.isEmpty else { return nil }
+
+        let queryLower = query.lowercased()
+        let aliasLower = settings.alias.lowercased()
+
+        // 前缀匹配或完全匹配
+        guard aliasLower.hasPrefix(queryLower) || queryLower == aliasLower else { return nil }
+
+        let icon = NSImage(
+            systemSymbolName: AdvancedExtensionType.stock.sfSymbolName,
+            accessibilityDescription: "股票"
+        ) ?? NSImage()
+        icon.size = NSSize(width: 32, height: 32)
+
+        return SearchResult(
+            name: "股票查询",
+            path: "gp-entry",
+            icon: icon,
+            isDirectory: false,
+            displayAlias: settings.alias,
+            isStockEntry: true
         )
     }
 

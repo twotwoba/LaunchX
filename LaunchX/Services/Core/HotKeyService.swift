@@ -231,6 +231,13 @@ class HotKeyService: ObservableObject {
     /// Codex Switcher 快捷键 ID
     let codexHotKeyId: UInt32 = 9
 
+    /// 股票面板快捷键触发回调
+    var onStockHotKeyPressed: (() -> Void)?
+    /// 股票面板快捷键引用
+    var stockHotKeyRef: EventHotKeyRef?
+    /// 股票面板快捷键 ID
+    let stockHotKeyId: UInt32 = 10
+
     // MARK: - 私有属性
 
     let hotKeySignature: OSType
@@ -366,6 +373,14 @@ class HotKeyService: ObservableObject {
             if hotKeyID.id == codexHotKeyId {
                 DispatchQueue.main.async { [weak self] in
                     self?.onCodexHotKeyPressed?()
+                }
+                return noErr
+            }
+
+            // 检查是否为股票面板快捷键
+            if hotKeyID.id == stockHotKeyId {
+                DispatchQueue.main.async { [weak self] in
+                    self?.onStockHotKeyPressed?()
                 }
                 return noErr
             }

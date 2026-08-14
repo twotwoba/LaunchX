@@ -241,6 +241,7 @@ class ResultCellView: NSView {
         let isApp = item.path.hasSuffix(".app")
         let isEntry = item.isBookmarkEntry || item.is2FAEntry || item.isMemeEntry
             || item.isFavoriteEntry || item.isClaudeCodeEntry || item.isCodexEntry
+            || item.isStockEntry
         let hasProcessStats = item.processStats != nil && !item.processStats!.isEmpty
         let isReminder = item.isReminder
 

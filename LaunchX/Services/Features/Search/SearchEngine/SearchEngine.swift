@@ -52,6 +52,7 @@ final class SearchEngine: ObservableObject {
     private(set) var cachedTwoFactorAuthSettings = TwoFactorAuthSettings.load()
     private(set) var cachedClaudeCodeSettings = ClaudeCodeSwitcherSettings.load()
     private(set) var cachedCodexSettings = CodexSwitcherSettings.load()
+    private(set) var cachedStockSettings = StockSettings.load()
 
     // 缓存默认搜索网页直达结果
     private var cachedDefaultSearchWebLinks: [SearchResult]?
@@ -103,6 +104,7 @@ final class SearchEngine: ObservableObject {
             self?.cachedTwoFactorAuthSettings = TwoFactorAuthSettings.load()
             self?.cachedClaudeCodeSettings = ClaudeCodeSwitcherSettings.load()
             self?.cachedCodexSettings = CodexSwitcherSettings.load()
+            self?.cachedStockSettings = StockSettings.load()
             self?.cachedDefaultSearchWebLinks = nil  // 清除缓存，下次搜索时重新生成
         }
     }

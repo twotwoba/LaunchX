@@ -400,6 +400,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             NotificationCenter.default.post(name: .init("enterCodexModeDirectly"), object: nil)
         }
 
+        // 设置股票面板快捷键回调
+        HotKeyService.shared.onStockHotKeyPressed = {
+            let settings = StockSettings.load()
+            guard settings.isEnabled else { return }
+            StockPanelManager.shared.togglePanel()
+        }
+
         // 设置选词翻译快捷键回调
         HotKeyService.shared.onTranslateSelectionHotKeyPressed = {
             let settings = AITranslateSettings.load()
@@ -443,6 +450,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // 加载 Codex 快捷键
         HotKeyService.shared.loadCodexHotKey()
+
+        // 加载股票面板快捷键
+        HotKeyService.shared.loadStockHotKey()
 
         // 启动剪贴板监听
         ClipboardService.shared.startMonitoring()

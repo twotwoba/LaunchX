@@ -90,6 +90,13 @@ extension SearchPanelViewController {
                     return nil
                 }
 
+                // 检查是否为股票面板入口
+                if item.isStockEntry {
+                    PanelManager.shared.hidePanel()
+                    StockPanelManager.shared.showPanel()
+                    return nil
+                }
+
                 // 检查是否为 IDE（有项目列表扩展）
                 if let ideType = IDEType.detect(from: item.path) {
                     let projects = IDERecentProjectsService.shared.getRecentProjects(

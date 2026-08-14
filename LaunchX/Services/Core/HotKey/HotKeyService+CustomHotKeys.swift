@@ -589,4 +589,49 @@ extension HotKeyService {
         }
     }
 
+    // MARK: - 股票面板快捷键
+
+    /// 注册股票面板快捷键
+    func registerStockHotKey(keyCode: UInt32, modifiers: UInt32) {
+        unregisterStockHotKey()
+        guard keyCode != 0 else { return }
+
+        let hotKeyID = EventHotKeyID(signature: hotKeySignature, id: stockHotKeyId)
+        var hotKeyRef: EventHotKeyRef?
+
+        let status = RegisterEventHotKey(
+            keyCode,
+            modifiers,
+            hotKeyID,
+            GetApplicationEventTarget(),
+            0,
+            &hotKeyRef
+        )
+
+        if status == noErr {
+            stockHotKeyRef = hotKeyRef
+            print("HotKeyService: Registered Stock HotKey (Code: \(keyCode), Mods: \(modifiers))")
+        } else {
+            print("HotKeyService: Failed to register Stock hotkey. Status: \(status)")
+        }
+    }
+
+    /// 注销股票面板快捷键
+    func unregisterStockHotKey() {
+        if let ref = stockHotKeyRef {
+            UnregisterEventHotKey(ref)
+            stockHotKeyRef = nil
+            print("HotKeyService: Unregistered Stock HotKey")
+        }
+    }
+
+    /// 加载股票面板快捷键设置
+    func loadStockHotKey() {
+        let settings = StockSettings.load()
+        if settings.hotKeyCode != 0 {
+            registerStockHotKey(
+                keyCode: settings.hotKeyCode, modifiers: settings.hotKeyModifiers)
+        }
+    }
+
 }
