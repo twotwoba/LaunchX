@@ -29,28 +29,24 @@ enum StockAnalysisMode: String, Codable, CaseIterable, Identifiable {
 // MARK: - 提示词模板
 
 /// 用户自定义的分析提示词模板。
-/// 占位符：{stocks}=股票清单与代码；{date}=目标日期；{data}=应用取到的结构化数据。
+/// 占位符：{stocks}/{ticker}=股票清单与代码；{date}=目标日期；{data}=应用取到的结构化数据。
 struct StockPromptTemplate: Identifiable, Codable, Hashable {
     let id: UUID
     var name: String
     var systemPrompt: String
     var userPromptTemplate: String
-    /// 该模板建议使用的默认模式
-    var defaultMode: StockAnalysisMode
-    /// 此模板是否需要 Function Calling（仅 agent 模式生效）
+    /// 此模板是否需要 Function Calling（勾选后走深度分析：模型自主调用行情工具取数）
     var needsTools: Bool
     var isEnabled: Bool
 
     init(
         id: UUID = UUID(), name: String, systemPrompt: String, userPromptTemplate: String,
-        defaultMode: StockAnalysisMode = .quick, needsTools: Bool = false,
-        isEnabled: Bool = true
+        needsTools: Bool = false, isEnabled: Bool = true
     ) {
         self.id = id
         self.name = name
         self.systemPrompt = systemPrompt
         self.userPromptTemplate = userPromptTemplate
-        self.defaultMode = defaultMode
         self.needsTools = needsTools
         self.isEnabled = isEnabled
     }
@@ -71,7 +67,6 @@ struct StockPromptTemplate: Identifiable, Codable, Hashable {
             "3. 结合资金面（主力/超大单/大单净流入）\n" +
             "4. 结合筹码密集度（如有）\n\n" +
             "结论请分点给出，最后给一句总评。",
-        defaultMode: .quick
     )
 
     /// 默认模板：纯技术面（快速模式示例）
@@ -81,7 +76,6 @@ struct StockPromptTemplate: Identifiable, Codable, Hashable {
             "你是技术分析助手，基于 MACD、KDJ、均线、量价给出短周期技术研判。结论简短、可直接执行层面参考。",
         userPromptTemplate:
             "股票：{stocks}，日期：{date}\n数据：\n{data}\n\n请快速给出技术面多空判断与关键价位。",
-        defaultMode: .quick
     )
 }
 
@@ -106,6 +100,15 @@ struct StockSettings: Codable {
     var panelWidth: CGFloat
     var panelHeight: CGFloat
 
+    // Excel 导出列（StockExporter.allColumns 的 key，按此顺序输出；空则用默认集）
+    var exportColumns: [String]
+
+    /// 导出列默认集（分时分钟明细，key 对应 StockExporter.allColumns）
+    static let defaultExportColumns = [
+        "date", "open", "high", "low", "close", "avgPrice", "volume", "amount",
+        "pctChange", "volumeRatio", "turnover",
+    ]
+
     static let `default` = StockSettings(
         isEnabled: true,
         alias: "gp",
@@ -113,11 +116,58 @@ struct StockSettings: Codable {
         hotKeyModifiers: 0,
         modelConfigs: [],
         promptTemplates: [.defaultComprehensive, .defaultTechnical],
-        panelWidth: 720,
-        panelHeight: 520
+        panelWidth: 820,
+        panelHeight: 560,
+        exportColumns: defaultExportColumns
     )
 
     private static let storageKey = "stockSettings"
+
+    private enum CodingKeys: String, CodingKey {
+        case isEnabled, alias, hotKeyCode, hotKeyModifiers, modelConfigs, promptTemplates
+        case panelWidth, panelHeight, exportColumns
+    }
+
+    init(
+        isEnabled: Bool, alias: String, hotKeyCode: UInt32, hotKeyModifiers: UInt32,
+        modelConfigs: [AIModelConfig], promptTemplates: [StockPromptTemplate],
+        panelWidth: CGFloat, panelHeight: CGFloat, exportColumns: [String]
+    ) {
+        self.isEnabled = isEnabled
+        self.alias = alias
+        self.hotKeyCode = hotKeyCode
+        self.hotKeyModifiers = hotKeyModifiers
+        self.modelConfigs = modelConfigs
+        self.promptTemplates = promptTemplates
+        self.panelWidth = panelWidth
+        self.panelHeight = panelHeight
+        self.exportColumns = exportColumns
+    }
+
+    /// 老配置缺少 exportColumns 字段时回落默认值，避免整体解码失败重置用户设置
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        isEnabled = try c.decode(Bool.self, forKey: .isEnabled)
+        alias = try c.decode(String.self, forKey: .alias)
+        hotKeyCode = try c.decode(UInt32.self, forKey: .hotKeyCode)
+        hotKeyModifiers = try c.decode(UInt32.self, forKey: .hotKeyModifiers)
+        modelConfigs = try c.decode([AIModelConfig].self, forKey: .modelConfigs)
+        promptTemplates = try c.decode([StockPromptTemplate].self, forKey: .promptTemplates)
+        panelWidth = try c.decode(CGFloat.self, forKey: .panelWidth)
+        panelHeight = try c.decode(CGFloat.self, forKey: .panelHeight)
+        var columns = try c.decodeIfPresent([String].self, forKey: .exportColumns)
+            ?? StockSettings.defaultExportColumns
+        // 迁移：老配置补上新增的日级列（涨跌幅/量比/换手率），只追加一次
+        if columns.contains("amount"), !columns.contains("pctChange") {
+            columns += ["pctChange", "volumeRatio", "turnover"]
+        }
+        // 迁移：旧默认尺寸 720×520 升级为新默认 820×560（用户手动改过尺寸的不受影响）
+        if panelWidth == 720 && panelHeight == 520 {
+            panelWidth = 820
+            panelHeight = 560
+        }
+        exportColumns = columns
+    }
 
     static func load() -> StockSettings {
         if let data = UserDefaults.standard.data(forKey: storageKey),

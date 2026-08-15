@@ -30,7 +30,8 @@ extension StockPanelViewController: NSTextViewDelegate {
     func updateInputHeight() {
         guard let tv = inputTextView,
             let layoutManager = tv.layoutManager,
-            let textContainer = tv.textContainer
+            let textContainer = tv.textContainer,
+            let scroll = inputScrollView
         else { return }
         layoutManager.ensureLayout(for: textContainer)
         let textHeight = layoutManager.usedRect(for: textContainer).height
@@ -38,6 +39,11 @@ extension StockPanelViewController: NSTextViewDelegate {
         if let c = inputHeightConstraint, c.constant != newHeight {
             c.constant = newHeight
             view.layoutSubtreeIfNeeded()
+        }
+        // 文字在输入框内垂直居中（NSTextView 默认顶对齐，与右侧按钮组看起来错位）
+        let inset = max(0, (scroll.bounds.height - textHeight) / 2)
+        if tv.textContainerInset.height != inset {
+            tv.textContainerInset = NSSize(width: 0, height: inset)
         }
     }
 
@@ -99,12 +105,67 @@ extension StockPanelViewController: NSTextViewDelegate {
         }
     }
 
-    // MARK: - 导出
+    // MARK: - 分时（双击日K某天 → 独立窗口展示，支持多开比对）
 
-    @objc func copyCSV() {
-        guard !bundles.isEmpty else { return }
-        StockExporter.copyCSV(bundles: bundles)
-        flashButton(copyCSVButton)
+    /// 双击日K蜡烛：立即弹分时窗口（窗内显示查询中），数据到达后回填；不占用主面板 loading/提示
+    func handleDayDoubleClick(tsMillis: Int) {
+        guard let bundle = bundles.first else { return }
+        let df = DateFormatter()
+        df.dateFormat = "yyyy-MM-dd"
+        df.locale = Locale(identifier: "en_US_POSIX")
+        df.timeZone = TimeZone(identifier: "Asia/Shanghai")
+        let day = df.string(from: Date(timeIntervalSince1970: TimeInterval(tsMillis) / 1000))
+
+        let intradayWindow = StockIntradayWindowManager.show(
+            day: day, code: bundle.code, name: bundle.name,
+            columns: settings.exportColumns, context: intradayContext(bundle: bundle, day: day))
+        let secid = bundle.secid
+        Task { [weak intradayWindow] in
+            var points: [StockTrendPoint]? = nil
+            var err: String? = nil
+            do {
+                points = try await StockDataService.shared.fetchIntraday(secid: secid, date: day)
+            } catch { err = error.localizedDescription }
+            await MainActor.run {
+                guard let w = intradayWindow else { return }
+                if let points = points, !points.isEmpty {
+                    w.render(points: points)
+                } else {
+                    w.fail(message: err ?? "无数据")
+                }
+            }
+        }
+    }
+
+    /// 分时上下文：昨收 = 前一根日K收盘，量比分母 = 前 5 日日均量，换手率分母 = 流通股本
+    private func intradayContext(bundle: StockDataBundle, day: String) -> StockIntradayContext {
+        let bars = bundle.chartBars
+        // 快照的 circShares 为 0 表示来源缺失（新浪兜底），回退基本面
+        let shares = (bundle.snapshot?.circShares ?? 0) > 0
+            ? bundle.snapshot?.circShares
+            : bundle.fundamentals?.circShares
+        guard let idx = bars.firstIndex(where: { $0.date == day }) else {
+            // 当日还没进日K（盘中查今天）：最后一根即昨日，量比窗口为含昨日的最后 5 根
+            return StockIntradayContext(
+                preClose: bars.last?.close,
+                avg5Volume: avgVolume(bars, before: bars.count),
+                circShares: shares,
+                turnoverRate: nil)
+        }
+        return StockIntradayContext(
+            preClose: idx > 0 ? bars[idx - 1].close : nil,
+            avg5Volume: avgVolume(bars, before: idx),
+            circShares: shares,
+            turnoverRate: bars[idx].turnover > 0 ? bars[idx].turnover : nil)
+    }
+
+    /// endIdx 之前（不含）最多 5 根的日均量(手)
+    private func avgVolume(_ bars: [StockDailyBar], before endIdx: Int) -> Double? {
+        let from = max(0, endIdx - 5)
+        guard endIdx > from else { return nil }
+        let window = bars[from..<endIdx]
+        let sum = window.reduce(0) { $0 + $1.volume }
+        return sum / Double(window.count)
     }
 
     // MARK: - 状态辅助
@@ -118,14 +179,5 @@ extension StockPanelViewController: NSTextViewDelegate {
     func setAIPlaceholder(_ text: String) {
         guard let tv = aiTextView else { return }
         tv.string = text
-    }
-
-    func flashButton(_ button: NSButton?) {
-        guard let button = button else { return }
-        let original = button.title
-        button.title = "已复制 ✓"
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-            button.title = original
-        }
     }
 }

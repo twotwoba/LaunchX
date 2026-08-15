@@ -20,10 +20,34 @@
     font: -apple-system 13px; color: #ff6b6b; text-align: center;
     background: rgba(0,0,0,0.15); white-space: pre-wrap;
   }
+  /* 分时模式顶栏：日期 + 复制 + 返回 */
+  #intradayBar {
+    position: absolute; top: 6px; left: 0; right: 0; z-index: 15;
+    display: none; align-items: center; justify-content: space-between;
+    padding: 0 10px; pointer-events: none;
+  }
+  #intradayBar .title {
+    font: -apple-system 12px; color: rgba(255,255,255,0.7);
+    text-shadow: 0 1px 2px rgba(0,0,0,0.4);
+  }
+  #intradayBar .actions { display: flex; gap: 6px; pointer-events: auto; }
+  #intradayBar button {
+    font: -apple-system 11px; color: rgba(255,255,255,0.85);
+    background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 5px; padding: 2px 8px; cursor: pointer;
+  }
+  #intradayBar button:hover { background: rgba(255,255,255,0.2); }
 </style>
 </head>
 <body>
 <div id="chart"></div>
+<div id="intradayBar">
+  <span class="title" id="intradayTitle"></span>
+  <span class="actions">
+    <button id="copyIntradayBtn">复制 Excel</button>
+    <button id="backDailyBtn">返回日K</button>
+  </span>
+</div>
 <div id="hint">输入股票后回车，K 线图将显示在这里</div>
 <div id="error"></div>
 <script>
@@ -47,6 +71,10 @@
 let chart = null;
 // K 线缓存：Swift 每次查询推入全量数据，loader 从这里读取
 let barCache = [];
+let dayBars = [];  // 最近一次日K，分时切换时恢复
+let isIntraday = false;
+// 独立分时窗口模式：隐藏的 html 直接以分时态展示，「返回日K」变「关闭」
+let standaloneIntraday = false;
 
 // A 股惯例：红涨绿跌；蜡烛实心；副图（VOL/MACD）柱色与主图一致
 const CHART_STYLES = {
@@ -54,6 +82,7 @@ const CHART_STYLES = {
     horizontal: { color: 'rgba(255,255,255,0.05)' },
     vertical: { color: 'rgba(255,255,255,0.05)' }
   },
+  // 注意只能有一个 candle key：重复会被后者整块覆盖（踩过坑——蜡烛红涨绿跌失效回落到库默认绿涨红跌）
   candle: {
     type: 'candle_solid',
     bar: {
@@ -65,7 +94,44 @@ const CHART_STYLES = {
       high: { color: 'rgba(255,255,255,0.55)' },
       low: { color: 'rgba(255,255,255,0.55)' },
       last: { color: 'rgba(255,255,255,0.85)' }
-    }
+    },
+    // 去掉默认的 "{ticker} · {period}" 标题（v10 路径在 candle.tooltip 下）；
+    // 顶部悬浮数据行：默认项 + 换手率/量比（Swift 逐 bar 注入，缺失自动隐藏；分时 bar 无此字段不受影响）
+    tooltip: {
+      title: { show: false },
+      legend: {
+        template: ({ current }) => {
+          const fmt2 = (v) => (v == null || isNaN(v)) ? '--' : v.toFixed(2);
+          if (isIntraday) {
+            // 分时：只要 开/收/涨跌幅（相对昨收）；时间/高低/量去掉
+            let pct = null;
+            if (current && intradayPreClose > 0) {
+              pct = (current.close - intradayPreClose) / intradayPreClose * 100;
+            }
+            return [
+              { title: 'open', value: fmt2(current && current.open) },
+              { title: 'close', value: fmt2(current && current.close) },
+              { title: '涨跌幅', value: pct == null ? '--' : (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%' },
+            ];
+          }
+          const rows = [
+            { title: 'time', value: '{time}' },
+            { title: 'open', value: '{open}' },
+            { title: 'high', value: '{high}' },
+            { title: 'low', value: '{low}' },
+            { title: 'close', value: '{close}' },
+            { title: 'volume', value: '{volume}' },
+          ];
+          if (current && current.turnoverRate > 0) {
+            rows.push({ title: '换手', value: current.turnoverRate.toFixed(2) + '%' });
+          }
+          if (current && current.volumeRatio > 0) {
+            rows.push({ title: '量比', value: current.volumeRatio.toFixed(2) });
+          }
+          return rows;
+        },
+      },
+    },
   },
   indicator: {
     bars: [
@@ -97,12 +163,69 @@ const CHART_STYLES = {
   }
 };
 
+// 分时 x 轴刻度：库默认按「偶数根 bar」取刻度，1 分钟数据会落在 09:44 / 13:19
+// 这种非整点时刻。这里覆盖为整点/半点 + 首尾刻度；非分时模式原样返回默认刻度。
+const INTRA_HM = new Intl.DateTimeFormat('zh-CN', {
+  hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Shanghai' });
+const INTRA_MINUTE_CACHE = new Map();
+function intraMinuteOfDay(ts) {
+  let m = INTRA_MINUTE_CACHE.get(ts);
+  if (m === undefined) {
+    const parts = INTRA_HM.formatToParts(new Date(ts));
+    const num = (t) => {
+      const p = parts.find((q) => q.type === t);
+      return p ? parseInt(p.value, 10) : 0;
+    };
+    m = num('hour') * 60 + num('minute');
+    INTRA_MINUTE_CACHE.set(ts, m);
+  }
+  return m;
+}
+
+function intraCreateTicks({ defaultTicks, bounding }) {
+  if (!isIntraday || !barCache.length) return defaultTicks;
+  const n = barCache.length;
+  // 半点候选过密时退化为整点；minPx 为「HH:mm」文本 + 间隙的最小像素间距
+  const minPx = 58;
+  const maxTicks = Math.max(3, Math.floor(bounding.width / minPx));
+  const minGapBars = Math.max(2, Math.ceil((n * minPx) / bounding.width));
+  const half = n <= maxTicks * 30; // 粗判：候选半点数是否放得下
+  const cands = [0];
+  for (let i = 0; i < n; i++) {
+    const m = intraMinuteOfDay(barCache[i].timestamp);
+    if (m % (half ? 30 : 60) === 0 && i !== 0) cands.push(i);
+  }
+  cands.push(n - 1);
+  cands.sort((a, b) => a - b);
+  // 贪心去重：相邻候选不足 minGapBars 时取前者（首尾除外，尾刻度保留）
+  const picked = [];
+  for (const i of cands) {
+    if (!picked.length || i - picked[picked.length - 1] >= minGapBars) picked.push(i);
+  }
+  if (picked[picked.length - 1] !== n - 1 && n - 1 - picked[picked.length - 1] < minGapBars / 2) {
+    picked[picked.length - 1] = n - 1;  // 尾刻度离前一刻度过近时顶替，保证 15:00 可见
+  } else if (picked[picked.length - 1] !== n - 1) {
+    picked.push(n - 1);
+  }
+  return picked.map((i) => {
+    let coord = this.convertToPixel(i);
+    // 首尾刻度文字以坐标居中绘制，贴边会裁半 → 内收半个文字宽（"HH:mm" 约 36px）
+    if (i === 0) coord = Math.max(coord, 19);
+    if (i === n - 1) coord = Math.min(coord, bounding.width - 19);
+    return { coord, value: barCache[i].timestamp, text: INTRA_HM.format(barCache[i].timestamp) };
+  });
+}
+
 function initChart() {
   if (chart) return;
   const container = document.getElementById('chart');
   chart = klinecharts.init(container, { locale: 'zh-CN', styles: CHART_STYLES });
   // 双保险：init options 与 setStyles 再刷一次，确保部分 WebKit 下合并失效时颜色仍正确
   try { chart.setStyles(CHART_STYLES); } catch (e) { /* 保留 init 结果 */ }
+  try {
+    // createTicks 需以组件为 this 调用（内部用 convertToPixel），故传 function 而非箭头函数
+    chart.overrideXAxis({ createTicks: function (ctx) { return intraCreateTicks.call(this, ctx); } });
+  } catch (e) { /* 旧版本无此能力则维持默认刻度 */ }
   // 主图叠加 MA5/10/30/60（不建独立窗格）；副图：VOL、MACD（固定 paneId 便于调高度）
   chart.createIndicator({ name: 'MA', calcParams: [5, 10, 30, 60], paneId: 'candle_pane' });
   chart.createIndicator({ name: 'VOL', paneId: 'pane_vol' });
@@ -116,7 +239,40 @@ function initChart() {
       else callback([], false);
     }
   });
-  new ResizeObserver(() => { if (chart) { chart.resize(); applyPaneHeights(); } }).observe(container);
+  new ResizeObserver(() => {
+    if (!chart) return;
+    chart.resize();
+    applyPaneHeights();
+    if (standaloneIntraday) fitIntradayWidth();  // 分时窗口拖宽后重新撑满
+  }).observe(container);
+
+  // 双击：日K 上双击某根蜡烛 → 通知 Swift 拉当天分时；分时上双击 → 返回日K（独立窗口模式无操作）
+  container.addEventListener('dblclick', (e) => {
+    if (!chart) return;
+    if (isIntraday) {
+      if (!standaloneIntraday) showDaily();
+      return;
+    }
+    const rect = container.getBoundingClientRect();
+    let hit = null;
+    try {
+      // v10 API：convertFromPixel({x, y}) → {dataIndex, timestamp, value}
+      hit = chart.convertFromPixel({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+    } catch (err) { return; }
+    if (!hit || hit.dataIndex == null || hit.dataIndex < 0) return;
+    const bars = chart.getDataList();
+    if (!bars || hit.dataIndex >= bars.length) return;
+    const ts = hit.timestamp != null ? hit.timestamp : bars[hit.dataIndex].timestamp;
+    if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.chartDoubleClick) {
+      window.webkit.messageHandlers.chartDoubleClick.postMessage(ts);
+    }
+  });
+  document.getElementById('backDailyBtn').addEventListener('click', () => showDaily());
+  document.getElementById('copyIntradayBtn').addEventListener('click', () => {
+    if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.chartCopy) {
+      window.webkit.messageHandlers.chartCopy.postMessage(intradayDay);
+    }
+  });
 }
 
 // 副图高度：VOL ≈ 11%、MACD ≈ 15%，主图自动占剩余空间（≈3/4）
@@ -129,12 +285,66 @@ function applyPaneHeights() {
   } catch (e) { /* 旧版本无此 API 时保持默认等分 */ }
 }
 
+// 自定义指标：分时叠加线（主图）。两条 figure 合在一个指标里——
+// v10 同一 pane 上 createIndicator 是替换语义，分拆两个指标会互相顶掉（均价线消失的回归根因）
+// avp: 均价线（累计额 / 累计量，量单位为手）；base: 昨收平线（分时零轴，恒取 showIntraday 记录的昨收）
+try {
+  klinecharts.registerIndicator({
+    name: 'INTRA',
+    shortName: '',
+    series: 'price',
+    calc: (dataList) => {
+      const b = intradayPreClose > 0 ? intradayPreClose : null;
+      let sumVol = 0, sumAmt = 0;
+      return dataList.map((d) => {
+        sumVol += d.volume || 0;
+        sumAmt += d.turnover || 0;
+        return {
+          avp: sumVol > 0 ? sumAmt / (sumVol * 100) : null,
+          base: b,
+        };
+      });
+    },
+    figures: [
+      { key: 'avp', title: '均价: ', type: 'line',
+        styles: () => ({ color: '#FF9600', size: 1 }) },
+      { key: 'base', title: '', type: 'line',
+        styles: () => ({ color: 'rgba(255,255,255,0.4)', size: 1, style: 'dashed', dashedValue: [4, 3] }) },
+    ],
+  });
+} catch (e) { /* 已注册或旧版本 */ }
+
+// 分时量柱：颜色跟分时价格线一致（该分钟价 ≥ 上一分钟 → 红涨 / 绿跌），
+// 不用内置 VOL 的「分钟内 close>open」配色——分时下面积线恒红，量柱会显得花
+try {
+  klinecharts.registerIndicator({
+    name: 'MINVOL',
+    shortName: 'VOL',
+    series: 'volume',
+    precision: 0,
+    minValue: 0,
+    calc: (dataList) => dataList.map((d, i) => ({
+      volume: d.volume ?? 0,
+      up: i === 0 ? true : d.close >= dataList[i - 1].close,
+    })),
+    figures: [{
+      key: 'volume', title: 'VOLUME: ', type: 'bar', baseValue: 0,
+      styles: (ctx) => {
+        const cur = ctx.data.current;
+        return { color: cur && cur.up ? '#f6465d' : '#2ebd85' };
+      },
+    }],
+  });
+} catch (e) { /* 已注册或旧版本 */ }
+
 // 推入全量 K 线（json 字符串），并可选定位到指定时间戳
 function updateData(json, scrollTs) {
   initChart();
   document.getElementById('hint').style.display = 'none';
   clearError();
   barCache = JSON.parse(json);
+  dayBars = barCache;  // 供切回日K用
+  if (isIntraday) { showDaily(); return; }
   // 每次传入新对象字面量，保证引用不等 → 必然触发 resetData 重新加载
   chart.setSymbol({ symbol: 'local', pricePrecision: 2, volumePrecision: 0 });
   chart.setPeriod({ type: 'day' });
@@ -144,6 +354,115 @@ function updateData(json, scrollTs) {
       try { chart.scrollToTimestamp(scrollTs); } catch (e) { /* 时间戳不在范围内则忽略 */ }
     }));
   }
+}
+
+// 分时图：面积线 + 均价线 + 昨收零轴 + 分钟量柱；去掉日K专属的 MA/MACD
+let intradayDay = '';
+let intradayPreClose = 0;  // 供百分比轴 createRange 对称化用
+function showIntraday(json, day, preClose) {
+  initChart();
+  document.getElementById('hint').style.display = 'none';
+  clearError();
+  isIntraday = true;
+  intradayDay = day || '';
+  document.getElementById('intradayTitle').textContent = intradayDay + ' 分时';
+  document.getElementById('intradayBar').style.display = standaloneIntraday ? 'none' : 'flex';
+  const arr = JSON.parse(json);
+  // 昨收只作轴/基准线参考值，不注入假数据点（注入会平移整条分时线，与实际对不上）
+  const base = Number(preClose) || 0;
+  intradayPreClose = base;
+  barCache = arr;
+  try { chart.removeIndicator({ name: 'MA' }); } catch (e) {}
+  try { chart.removeIndicator({ name: 'MACD' }); } catch (e) {}
+  // VOL 的量柱按分钟内开收配色，与恒红的分时线不搭 → 换成跟价走的 MINVOL
+  try { chart.removeIndicator({ name: 'VOL', paneId: 'pane_vol' }); } catch (e) {}
+  try { chart.createIndicator({ name: 'MINVOL', paneId: 'pane_vol' }); } catch (e) {}
+  const styles = {
+    candle: {
+      type: 'area',
+      area: {
+        line: { size: 1, color: '#f6465d' },
+        backgroundColor: [
+          { offset: 0, color: 'rgba(246,70,93,0.18)' },
+          { offset: 1, color: 'rgba(246,70,93,0)' }
+        ]
+      }
+    }
+  };
+  chart.setStyles(styles);
+  // 百分比轴：涨跌相对昨收显示；注意这是布局级配置，setStyles 无效。
+  // 自定义 createRange 把价格范围对称化（以昨收为中心），0% 恒在垂直居中；gap 上下相等保证边距也对称
+  if (base > 0) {
+    try {
+      chart.overrideYAxis({
+        paneId: 'candle_pane',
+        name: 'percentage',
+        gap: { top: 0.08, bottom: 0.08 },
+        createRange: ({ defaultRange }) => {
+          const b = intradayPreClose;
+          const span = Math.max(
+            Math.abs(defaultRange.from - b), Math.abs(defaultRange.to - b), b * 0.001);
+          const from = b - span, to = b + span;
+          const l = (from - b) / b * 100, u = (to - b) / b * 100;
+          return {
+            from, to, range: to - from,
+            realFrom: l, realTo: u, realRange: u - l,
+            displayFrom: l, displayTo: u, displayRange: u - l,
+          };
+        },
+      });
+    } catch (e) { /* 旧版本无此能力则维持默认范围 */ }
+  }
+  try { chart.createIndicator({ name: 'INTRA', paneId: 'candle_pane' }); } catch (e) {}
+  applyPaneHeights();
+  chart.setSymbol({ symbol: 'local_min', pricePrecision: 2, volumePrecision: 0 });
+  chart.setPeriod({ type: 'minute' });
+  if (standaloneIntraday) {
+    // 等数据经 loader 落位后再按宽度平摊（双 rAF 保证首帧布局完成）
+    requestAnimationFrame(() => requestAnimationFrame(() => fitIntradayWidth()));
+  }
+}
+
+// 切回日K：恢复蜡烛样式与 MA/MACD
+function showDaily() {
+  if (!chart || (!dayBars.length && !barCache.length)) return;
+  isIntraday = false;
+  document.getElementById('intradayBar').style.display = 'none';
+  try { chart.removeIndicator({ name: 'INTRA' }); } catch (e) {}
+  try { chart.removeIndicator({ name: 'MINVOL', paneId: 'pane_vol' }); } catch (e) {}
+  try { chart.createIndicator({ name: 'VOL', paneId: 'pane_vol' }); } catch (e) {}
+  chart.setStyles({ candle: { type: 'candle_solid' } });
+  try { chart.overrideYAxis({ paneId: 'candle_pane', name: 'normal' }); } catch (e) {}
+  try {
+    chart.createIndicator({ name: 'MA', calcParams: [5, 10, 30, 60], paneId: 'candle_pane' });
+    chart.createIndicator({ name: 'MACD', paneId: 'pane_macd' });
+  } catch (e) {}
+  applyPaneHeights();
+  if (dayBars.length) barCache = dayBars;
+  chart.setSymbol({ symbol: 'local', pricePrecision: 2, volumePrecision: 0 });
+  chart.setPeriod({ type: 'day' });
+}
+
+// 独立分时窗口模式：由 Swift 在 showIntraday 前调用；窗口标题栏自带标题/关闭/复制，
+// 图内整个分时工具条隐藏（复制按钮在图内会遮挡右侧百分比轴刻度）
+function setStandaloneIntraday() {
+  standaloneIntraday = true;
+  document.getElementById('intradayBar').style.display = 'none';
+}
+
+// 分时撑满左右两边：禁缩放/平移，按数据量平摊 bar 宽度
+function fitIntradayWidth() {
+  if (!chart) return;
+  try {
+    chart.setZoomEnabled(false);
+    chart.setScrollEnabled(false);
+    const n = chart.getDataList().length;
+    if (n > 0) {
+      const w = document.getElementById('chart').clientWidth || 500;
+      chart.setBarSpace(Math.min(50, Math.max(1, Math.floor(w / n))));
+      chart.setOffsetRightDistance(0);
+    }
+  } catch (e) { /* 某些版本无此 API 则维持默认 */ }
 }
 
 function showError(msg) {

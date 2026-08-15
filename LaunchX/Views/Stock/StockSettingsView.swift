@@ -126,7 +126,7 @@ struct StockSettingsView: View {
                         }
                         .buttonStyle(.plain)
                     }
-                    Text("占位符：{stocks}=股票清单，{date}=日期，{data}=数据。快速模式会把数据直接填入；深度模式让 AI 自行调工具取数。")
+                    Text("占位符：{stocks}/{ticker}=股票清单，{date}=日期，{data}=数据。快速模式把数据直接填入；深度模式（勾选 Function Calling）让 AI 自行调工具取数。")
                         .font(.caption)
                         .foregroundColor(.secondary)
 
@@ -153,6 +153,16 @@ struct StockSettingsView: View {
                     Stepper("高 \(Int(settings.panelHeight))", value: $settings.panelHeight, in: 360...1000, step: 20)
                         .onChange(of: settings.panelHeight) { _, _ in settings.save() }
                     Spacer()
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 16)
+
+                // Excel 导出列
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("复制 Excel 导出列（每行一个交易日，不带表头）:")
+                        .font(.subheadline)
+                    FlowColumnPicker(columns: StockExporter.allColumns, selection: $settings.exportColumns)
+                        .onChange(of: settings.exportColumns) { _, _ in settings.save() }
                 }
                 .padding(.horizontal, 20)
                 .padding(.top, 16)
@@ -290,11 +300,6 @@ private struct StockTemplateRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(template.name).font(.system(size: 13, weight: .medium))
-                    Text(template.defaultMode.displayName)
-                        .font(.system(size: 10))
-                        .padding(.horizontal, 6).padding(.vertical, 1)
-                        .background(Color.accentColor.opacity(0.15))
-                        .cornerRadius(4)
                     if template.needsTools {
                         Text("需 Function Calling").font(.system(size: 10))
                             .foregroundColor(.orange)
@@ -337,7 +342,6 @@ private struct StockTemplateEditorSheet: View {
     @State private var name = ""
     @State private var systemPrompt = ""
     @State private var userPromptTemplate = ""
-    @State private var defaultMode: StockAnalysisMode = .quick
     @State private var needsTools = false
     @State private var id = UUID()
 
@@ -376,10 +380,7 @@ private struct StockTemplateEditorSheet: View {
             }
 
             HStack(spacing: 16) {
-                Picker("默认模式", selection: $defaultMode) {
-                    ForEach(StockAnalysisMode.allCases) { m in Text(m.displayName).tag(m) }
-                }
-                Toggle("需要 Function Calling（深度模式）", isOn: $needsTools)
+                Toggle("需要 Function Calling（深度分析：AI 自主调用行情工具取数）", isOn: $needsTools)
             }
 
             HStack {
@@ -400,7 +401,6 @@ private struct StockTemplateEditorSheet: View {
             name = tpl.name
             systemPrompt = tpl.systemPrompt
             userPromptTemplate = tpl.userPromptTemplate
-            defaultMode = tpl.defaultMode
             needsTools = tpl.needsTools
             id = tpl.id
         }
@@ -409,8 +409,41 @@ private struct StockTemplateEditorSheet: View {
         let tpl = StockPromptTemplate(
             id: id, name: name.trimmingCharacters(in: .whitespaces),
             systemPrompt: systemPrompt, userPromptTemplate: userPromptTemplate,
-            defaultMode: defaultMode, needsTools: needsTools, isEnabled: true)
+            needsTools: needsTools, isEnabled: true)
         onSave(tpl)
         dismiss()
+    }
+}
+
+/// 导出列勾选器（小标签流式排列，亮起=导出该列）
+private struct FlowColumnPicker: View {
+    let columns: [(key: String, title: String)]
+    @Binding var selection: [String]
+
+    var body: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 92), spacing: 6)], spacing: 6) {
+            ForEach(columns, id: \.key) { col in
+                let isOn = selection.contains(col.key)
+                Button {
+                    if isOn {
+                        selection.removeAll { $0 == col.key }
+                    } else {
+                        selection.append(col.key)
+                    }
+                } label: {
+                    Text(col.title)
+                        .font(.system(size: 11))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 3)
+                        .background(
+                            isOn ? Color.accentColor.opacity(0.25) : Color.secondary.opacity(0.1))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 5)
+                                .stroke(isOn ? Color.accentColor : Color.clear, lineWidth: 1))
+                        .cornerRadius(5)
+                }
+                .buttonStyle(.plain)
+            }
+        }
     }
 }

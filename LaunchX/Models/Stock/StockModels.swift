@@ -171,3 +171,25 @@ struct StockSearchCandidate: Hashable {
     let secid: String  // 市场.代码
     let marketName: String  // 沪A/深A 等
 }
+
+// MARK: - 分时点
+
+/// 当日分时数据点（东财 trends2 / 新浪5分钟重建）
+struct StockTrendPoint: Codable, Hashable {
+    let time: String  // yyyy-MM-dd HH:mm(:ss)
+    let open: Double
+    let high: Double
+    let low: Double
+    let price: Double
+    let avgPrice: Double
+    let volume: Double  // 成交量(手)
+    let amount: Double  // 成交额(元)
+}
+
+/// 分时窗口复制扩展列所需的日级上下文（来自主面板日K与快照，可部分缺失）
+struct StockIntradayContext {
+    var preClose: Double?  // 昨收（百分比轴零轴 / 涨跌幅）
+    var avg5Volume: Double?  // 前 5 日日均量(手)（量比）
+    var circShares: Double?  // 流通股本(股)（换手率）
+    var turnoverRate: Double?  // 当日换手率(%)（日K自带，优先于股本反推）
+}

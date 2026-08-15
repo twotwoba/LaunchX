@@ -8,6 +8,7 @@ enum StockError: LocalizedError {
     case searchFailed(String)
     case multipleCandidates([StockSearchCandidate])
     case network(String)
+    case intradayOutOfRange(String)
 
     var errorDescription: String? {
         switch self {
@@ -16,6 +17,7 @@ enum StockError: LocalizedError {
         case .searchFailed(let kw): return "未找到匹配「\(kw)」的股票"
         case .multipleCandidates: return "存在多个匹配，请用更精确的代码/名称"
         case .network(let msg): return "网络错误：\(msg)"
+        case .intradayOutOfRange(let day): return "「\(day)」超出分时数据源覆盖范围（约近 200 个交易日）"
         }
     }
 }
@@ -193,6 +195,221 @@ final class StockDataService {
         return klines.compactMap { parseBar($0) }
     }
 
+    // MARK: - 某日分时（多源逐级兜底）
+
+    /// 某日分时（多源逐级兜底，越靠前粒度越细）：
+    /// 东财 trends2（当日1分钟+原生均价）→ 腾讯 minute/query（当日1分钟）→
+    /// 新浪分钟K阶梯 scale=1/5/15/30（约9/42/124/247个交易日）→
+    /// 腾讯 mkline m5/m15/m30/m60（新浪整体不可用时兜底，最远约200个交易日）
+    func fetchIntraday(secid: String, date: String) async throws -> [StockTrendPoint] {
+        do {
+            let points = try await fetchTrends(secid: secid)
+            if let first = points.first, String(first.time.prefix(10)) == date {
+                return points
+            }
+        } catch {
+            logIntradayFallback("东财trends2", error)
+        }
+        do {
+            let points = try await fetchTencentMinute(secid: secid, date: date)
+            if !points.isEmpty { return points }
+        } catch {
+            logIntradayFallback("腾讯minute", error)
+        }
+        for scale in [1, 5, 15, 30] {
+            do {
+                let points = try await fetchIntradayViaSina(secid: secid, date: date, scale: scale)
+                if !points.isEmpty { return points }
+            } catch {
+                logIntradayFallback("新浪scale=\(scale)", error)
+            }
+        }
+        for scale in ["m5", "m15", "m30", "m60"] {
+            do {
+                let points = try await fetchMinuteBarsViaTencent(secid: secid, date: date, scale: scale)
+                if !points.isEmpty { return points }
+            } catch {
+                logIntradayFallback("腾讯mkline \(scale)", error)
+            }
+        }
+        throw StockError.intradayOutOfRange(date)
+    }
+
+    /// 兜底链每级的失败原因打到控制台：静默吞错会让「某天分时粒度突然变粗」无从排查
+    private func logIntradayFallback(_ source: String, _ error: Error) {
+        print("[Stock] 分时兜底 \(source) 失败: \(error.localizedDescription)")
+    }
+
+    /// "1.600519" → "sh600519"（新浪/腾讯通用行情代码）
+    private func marketSymbol(secid: String) -> String? {
+        let parts = secid.split(separator: ".", maxSplits: 1)
+        guard parts.count == 2 else { return nil }
+        let prefix = parts[0] == "1" ? "sh" : "sz"
+        return "\(prefix)\(parts[1])"
+    }
+
+    /// 是否连续竞价时段（含收盘 11:30/15:00）：腾讯 minute/query 会带出
+    /// 盘后固定价格交易（如 15:06–15:30），不过滤会导致分时图时间轴延伸到 15:30
+    private static func isRegularTradingMinute(_ hhmm: Int) -> Bool {
+        (930...1130).contains(hhmm) || (1300...1500).contains(hhmm)
+    }
+
+    /// 腾讯 minute/query：当日 1 分钟分时。"0930 1355.00 227 30758500.00" = HHmm 价 累计量(手) 累计额(元)
+    private func fetchTencentMinute(secid: String, date: String) async throws -> [StockTrendPoint] {
+        guard let symbol = marketSymbol(secid: secid) else { throw StockError.invalidResponse }
+        let compact = date.replacingOccurrences(of: "-", with: "")
+        let url = "https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=\(symbol)"
+        let data = try await get(url, referer: "https://gu.qq.com/")
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let node = (json["data"] as? [String: Any])?[symbol] as? [String: Any],
+            let dayNode = node["data"] as? [String: Any],
+            let rows = dayNode["data"] as? [String],
+            let dayRaw = dayNode["date"] as? String,
+            dayRaw == compact
+        else { throw StockError.invalidResponse }
+
+        var out: [StockTrendPoint] = []
+        var prevPrice: Double? = nil
+        var prevCumVol = 0.0, prevCumAmt = 0.0
+        var high = -Double.greatestFiniteMagnitude, low = Double.greatestFiniteMagnitude
+        for row in rows {
+            let p = row.split(separator: " ").map(String.init)
+            guard p.count >= 4, let hhmm = Int(p[0]),
+                Self.isRegularTradingMinute(hhmm),
+                let price = Double(p[1]),
+                let cumVol = Double(p[2]), let cumAmt = Double(p[3])
+            else { continue }
+            let minuteVol = max(0, cumVol - prevCumVol)  // 手
+            let minuteAmt = max(0, cumAmt - prevCumAmt)  // 元
+            prevCumVol = cumVol
+            prevCumAmt = cumAmt
+            high = max(high, price)
+            low = min(low, price)
+            let avg = cumVol > 0 ? cumAmt / (cumVol * 100) : price  // 累计额 / 累计股数
+            out.append(
+                StockTrendPoint(
+                    time: "\(date) \(p[0].prefix(2)):\(p[0].suffix(2))",
+                    open: prevPrice ?? price, high: high, low: low,
+                    price: price, avgPrice: avg,
+                    volume: minuteVol, amount: minuteAmt))
+            prevPrice = price
+        }
+        return out
+    }
+
+    /// 新浪分钟K → 当日分时点（datalen=1970，scale=1/5/15/30 约覆盖 9/42/124/247 个交易日；
+    /// 含成交额 → 真实均价；目标日超出覆盖返回空数组，由调用方降级到下一档）
+    private func fetchIntradayViaSina(secid: String, date: String, scale: Int) async throws -> [StockTrendPoint] {
+        guard let symbol = marketSymbol(secid: secid) else { throw StockError.invalidResponse }
+        let url =
+            "https://quotes.sina.cn/cn/api/json_v2.php/CN_MarketDataService.getKLineData?symbol=\(symbol)&scale=\(scale)&ma=no&datalen=1970"
+        let data = try await get(url, referer: "https://finance.sina.com.cn/")
+        guard let arr = try JSONSerialization.jsonObject(with: data) as? [[String: Any]]
+        else { throw StockError.invalidResponse }
+        var sumAmount = 0.0, sumVolShares = 0.0
+        var out: [StockTrendPoint] = []
+        for row in arr {
+            guard let day = row["day"] as? String, String(day.prefix(10)) == date,
+                let closeStr = row["close"] as? String,
+                let close = Double(closeStr)
+            else { continue }
+            let open = Double(row["open"] as? String ?? "") ?? close
+            let high = Double(row["high"] as? String ?? "") ?? close
+            let low = Double(row["low"] as? String ?? "") ?? close
+            let volShares = Double(row["volume"] as? String ?? "") ?? 0  // 股
+            let amount = Double(row["amount"] as? String ?? "") ?? 0  // 元
+            sumVolShares += volShares
+            sumAmount += amount
+            let avg = sumVolShares > 0 ? sumAmount / sumVolShares : close
+            out.append(
+                StockTrendPoint(
+                    time: day, open: open, high: high, low: low,
+                    price: close, avgPrice: avg,
+                    volume: volShares / 100, amount: amount))
+        }
+        // 新浪 1 分钟K按 bar 结束时间打戳（首根 09:31 覆盖 09:30–09:31 的成交），
+        // 补一个 09:30 集合竞价点让横轴与当日分时一致从 9:30 起；量额为 0 不影响均价与总量
+        if scale == 1,
+            let first = out.first,
+            first.time.hasSuffix("09:31:00")
+        {
+            let open = first.open
+            out.insert(
+                StockTrendPoint(
+                    time: first.time.replacingOccurrences(of: "09:31:00", with: "09:30:00"),
+                    open: open, high: open, low: open,
+                    price: open, avgPrice: open,
+                    volume: 0, amount: 0),
+                at: 0)
+        }
+        return out
+    }
+
+    /// 腾讯 mkline：5/15/30/60 分钟K（[时间,开,收,高,低,量(手)]，无额 → 均价用典型价近似）
+    private func fetchMinuteBarsViaTencent(secid: String, date: String, scale: String) async throws
+        -> [StockTrendPoint]
+    {
+        guard let symbol = marketSymbol(secid: secid) else { throw StockError.invalidResponse }
+        let url = "https://ifzq.gtimg.cn/appstock/app/kline/mkline?param=\(symbol),\(scale),,800"
+        let data = try await get(url, referer: "https://gu.qq.com/")
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let node = (json["data"] as? [String: Any])?[symbol] as? [String: Any],
+            let bars = node[scale] as? [[Any]]
+        else { throw StockError.invalidResponse }
+        let compact = date.replacingOccurrences(of: "-", with: "")
+        var sumPV = 0.0, sumV = 0.0
+        var out: [StockTrendPoint] = []
+        for bar in bars {
+            guard let ts = bar[0] as? String, String(ts.prefix(8)) == compact, bar.count >= 6,
+                let open = Double(bar[1] as? String ?? ""),
+                let close = Double(bar[2] as? String ?? ""),
+                let high = Double(bar[3] as? String ?? ""),
+                let low = Double(bar[4] as? String ?? ""),
+                let volume = Double(bar[5] as? String ?? "")  // 手
+            else { continue }
+            let typical = (high + low + close) / 3
+            sumPV += typical * volume * 100
+            sumV += volume * 100
+            let avg = sumV > 0 ? sumPV / sumV : close
+            out.append(
+                StockTrendPoint(
+                    time: "\(date) \(ts.dropFirst(8).prefix(2)):\(ts.dropFirst(10).prefix(2))",
+                    open: open, high: high, low: low,
+                    price: close, avgPrice: avg,
+                    volume: volume, amount: typical * volume * 100))
+        }
+        return out
+    }
+
+    /// 取最近一个交易日分时：时间,开,现价,高,低,量(手),额,均价
+    func fetchTrends(secid: String) async throws -> [StockTrendPoint] {
+        let url =
+            "https://push2his.eastmoney.com/api/qt/stock/trends2/get?secid=\(secid)&ut=\(ut)"
+            + "&fields1=f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13"
+            + "&fields2=f51,f52,f53,f54,f55,f56,f57,f58&iscr=0&ndays=1"
+        let data = try await get(url)
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let d = json["data"] as? [String: Any],
+            let trends = d["trends"] as? [String]
+        else { throw StockError.invalidResponse }
+        return trends.compactMap { row in
+            let p = row.split(separator: ",", omittingEmptySubsequences: false).map(String.init)
+            guard p.count >= 8,
+                let hhmm = Int(p[0].suffix(5).replacingOccurrences(of: ":", with: "")),
+                Self.isRegularTradingMinute(hhmm),
+                let price = Double(p[2]),
+                let avg = Double(p[7])
+            else { return nil }
+            return StockTrendPoint(
+                time: p[0],
+                open: Double(p[1]) ?? price,
+                high: Double(p[3]) ?? price,
+                low: Double(p[4]) ?? price,
+                price: price, avgPrice: avg,
+                volume: Double(p[5]) ?? 0, amount: Double(p[6]) ?? 0)
+        }
+    }
+
     /// 解析 "date,open,close,high,low,vol,amount,amplitude,pct,change,turnover"
     private func parseBar(_ row: String) -> StockDailyBar? {
         let p = row.split(separator: ",", omittingEmptySubsequences: false).map(String.init)
@@ -285,6 +502,26 @@ final class StockDataService {
         return bars
     }
 
+    /// 腾讯实时行情取流通股本：`v_sh600519="1~贵州茅台~600519~最新价~…~流通市值(亿)~总市值(亿)~…"`
+    /// 索引 3=最新价、44=流通市值(亿) → 股本 = 流通市值×1e8 / 最新价。东财不可达时的换手率推算来源。
+    /// 注意返回是 GBK 编码，UTF-8 解码会失败
+    private func fetchCircSharesViaTencent(secid: String) async -> Double? {
+        guard let symbol = marketSymbol(secid: secid) else { return nil }
+        let url = "https://qt.gtimg.cn/q=\(symbol)"
+        guard let data = try? await get(url, referer: "https://gu.qq.com/") else { return nil }
+        let gbk = CFStringConvertEncodingToNSStringEncoding(
+            CFStringConvertIANACharSetNameToEncoding("GB18030" as CFString))
+        let text = String(data: data, encoding: String.Encoding(rawValue: gbk))
+            ?? String(data: data, encoding: .utf8)
+        guard let text = text, let start = text.firstIndex(of: "~") else { return nil }
+        let fields = text[start...].split(separator: "~", omittingEmptySubsequences: false).map(String.init)
+        guard fields.count > 45,
+            let price = Double(fields[3]), price > 0,
+            let circCapYi = Double(fields[44]), circCapYi > 0
+        else { return nil }
+        return circCapYi * 1e8 / price
+    }
+
     // MARK: - 资金流（东财 fflow）
 
     /// 取最近 lmt 日资金流。字段顺序（实测 f51..f65）：
@@ -360,6 +597,20 @@ final class StockDataService {
         let capitalFlows = await flows
         let fundamentalsVal = await fundamentals
 
+        // 换手率回填：新浪兜底的 bar 无 f61 → 用腾讯流通股本反推（近似：近一年股本视为不变）
+        if bars.contains(where: { $0.turnover == 0 }),
+            let shares = await fetchCircSharesViaTencent(secid: secid), shares > 0
+        {
+            bars = bars.map { bar in
+                bar.turnover > 0 || bar.volume <= 0 ? bar
+                    : StockDailyBar(
+                        date: bar.date, open: bar.open, close: bar.close, high: bar.high,
+                        low: bar.low, volume: bar.volume, amount: bar.amount,
+                        amplitude: bar.amplitude, pctChange: bar.pctChange, change: bar.change,
+                        turnover: bar.volume * 100 / shares * 100)
+            }
+        }
+
         // 双源都失败：若实时快照可用则降级展示（无技术指标），否则报错
         if bars.isEmpty {
             if resolved.targetDate == nil {
@@ -430,8 +681,14 @@ final class StockDataService {
             if note == nil { note = "历史日期：实时市值等盘中字段不可用" }
         }
 
+        // 直接输代码查询时 resolve 只回填 code 当名字；快照接口能拿到真实名称，兜底替换
+        var displayName = resolved.name ?? code
+        if displayName == code, let sn = snapshot?.name, !sn.isEmpty, sn != code {
+            displayName = sn
+        }
+
         return StockDataBundle(
-            input: resolved.input, code: code, name: resolved.name ?? code,
+            input: resolved.input, code: code, name: displayName,
             secid: secid, targetDate: resolved.targetDate,
             snapshot: snapshot, indicators: indicators,
             bars: Array(bars.suffix(20)),  // 仅保留近 20 日供 AI 看趋势，控制体积

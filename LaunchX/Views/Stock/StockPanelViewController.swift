@@ -22,7 +22,6 @@ class StockPanelViewController: NSViewController {
     // 输入行右侧控件
     var templatePopup: NSPopUpButton?
     var analyzeButton: NSButton?
-    var copyCSVButton: NSButton?
 
     // 内容分栏
     var contentDivider: NSView?
@@ -54,7 +53,7 @@ class StockPanelViewController: NSViewController {
     // MARK: - 生命周期
 
     override func loadView() {
-        view = NSView(frame: NSRect(x: 0, y: 0, width: 720, height: 520))
+        view = NSView(frame: NSRect(x: 0, y: 0, width: 820, height: 560))
         view.wantsLayer = true
     }
 
@@ -68,6 +67,13 @@ class StockPanelViewController: NSViewController {
             name: NSNotification.Name("enableLiquidGlassDidChange"),
             object: nil
         )
+    }
+
+    /// 布局完成后校正输入框垂直居中：否则首启光标顶对齐（updateInputHeight 原本只在 textDidChange 触发），
+    /// 面板尺寸变化时也能跟随重新居中；数值未变时内部早退，重复调用无开销
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        updateInputHeight()
     }
 
     @objc func handleLiquidGlassSettingDidChange() {

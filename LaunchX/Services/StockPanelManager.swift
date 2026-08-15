@@ -32,6 +32,13 @@ class StockPanelManager: NSObject, NSWindowDelegate {
 
         viewController?.reloadSettings()
 
+        // 套用设置面板里的尺寸（面板只创建一次，stepper 改动在此生效）
+        let sizeSettings = StockSettings.load()
+        let target = NSSize(width: sizeSettings.panelWidth, height: sizeSettings.panelHeight)
+        if panel.frame.size != target {
+            panel.setContentSize(target)
+        }
+
         // 鼠标所在屏幕居中、稍偏上
         let mouseLocation = NSEvent.mouseLocation
         let currentScreen =

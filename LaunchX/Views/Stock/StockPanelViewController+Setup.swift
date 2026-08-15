@@ -127,7 +127,7 @@ extension StockPanelViewController {
         let heightC = scroll.heightAnchor.constraint(equalToConstant: inputMinHeight)
         self.inputHeightConstraint = heightC
 
-        // 输入框右侧：AI 上下文模板 + AI 分析 + 复制 CSV（与输入框垂直居中）
+        // 输入框右侧：AI 上下文模板 + AI 分析（与输入框垂直居中）
         let popup = NSPopUpButton()
         popup.controlSize = .small
         popup.translatesAutoresizingMaskIntoConstraints = false
@@ -140,19 +140,11 @@ extension StockPanelViewController {
         containerView.addSubview(analyze)
         self.analyzeButton = analyze
 
-        let copyCSV = makeButton(title: "复制 CSV", symbol: "tablecells", action: #selector(copyCSV))
-        containerView.addSubview(copyCSV)
-        self.copyCSVButton = copyCSV
-
         NSLayoutConstraint.activate([
             scroll.topAnchor.constraint(equalTo: titleBar.bottomAnchor, constant: 4),
             scroll.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 16),
 
-            copyCSV.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -16),
-            copyCSV.centerYAnchor.constraint(equalTo: scroll.centerYAnchor),
-            copyCSV.widthAnchor.constraint(equalToConstant: 96),
-
-            analyze.trailingAnchor.constraint(equalTo: copyCSV.leadingAnchor, constant: -8),
+            analyze.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -16),
             analyze.centerYAnchor.constraint(equalTo: scroll.centerYAnchor),
             analyze.widthAnchor.constraint(equalToConstant: 96),
 
@@ -163,7 +155,7 @@ extension StockPanelViewController {
             scroll.trailingAnchor.constraint(equalTo: popup.leadingAnchor, constant: -8),
             heightC,
 
-            placeholder.topAnchor.constraint(equalTo: scroll.topAnchor),
+            placeholder.centerYAnchor.constraint(equalTo: scroll.centerYAnchor),
             placeholder.leadingAnchor.constraint(equalTo: scroll.leadingAnchor, constant: 5),
         ])
     }
@@ -178,6 +170,8 @@ extension StockPanelViewController {
         chart.translatesAutoresizingMaskIntoConstraints = false
         containerView.addSubview(chart)
         self.chartView = chart
+        // 双击日K蜡烛 → 弹独立分时窗口（支持多天多开比对）
+        chart.onDayDoubleClick = { [weak self] ts in self?.handleDayDoubleClick(tsMillis: ts) }
 
         // —— 分隔线 ——
         let divider = NSView()
@@ -287,7 +281,7 @@ extension StockPanelViewController {
     }
 
     func setupLoadingIndicator() {
-        guard let titleBar = titleBar, let pinButton = pinButton else { return }
+        guard let titleBar = titleBar else { return }
 
         let indicator = NSProgressIndicator()
         indicator.style = .spinning
@@ -297,9 +291,10 @@ extension StockPanelViewController {
         titleBar.addSubview(indicator)
         self.loadingIndicator = indicator
 
+        // 左上角：标题栏左侧空位（来源声明居中、固定按钮在右，互不遮挡）
         NSLayoutConstraint.activate([
             indicator.centerYAnchor.constraint(equalTo: titleBar.centerYAnchor),
-            indicator.trailingAnchor.constraint(equalTo: pinButton.leadingAnchor, constant: -8),
+            indicator.leadingAnchor.constraint(equalTo: titleBar.leadingAnchor, constant: 12),
             indicator.widthAnchor.constraint(equalToConstant: 16),
             indicator.heightAnchor.constraint(equalToConstant: 16),
         ])
@@ -327,9 +322,9 @@ extension StockPanelViewController {
 
     // MARK: - 当前选择
 
-    /// 分析模式：跟随所选模板的 defaultMode（面板不再手动切换）
+    /// 分析模式：模板勾了「需要 Function Calling」→ 深度分析，否则快速分析
     var currentMode: StockAnalysisMode {
-        currentTemplate?.defaultMode ?? .quick
+        (currentTemplate?.needsTools ?? false) ? .agent : .quick
     }
 
     /// 当前选择的提示词模板
