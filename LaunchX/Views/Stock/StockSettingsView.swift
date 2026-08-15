@@ -11,6 +11,8 @@ struct StockSettingsView: View {
     @State private var editingTemplate: StockPromptTemplate?
     /// zzshare 可选 Token（key 与 defaults write 兼容）；留空 = 匿名
     @State private var zzshareToken = UserDefaults.standard.string(forKey: "zzshare_sdk_key") ?? ""
+    /// 是否明文显示 Token（默认掩码）
+    @State private var showZzshareToken = false
 
     private let labelWidth: CGFloat = 140
 
@@ -171,14 +173,30 @@ struct StockSettingsView: View {
 
                 Divider().padding(.top, 16)
 
-                // zzshare Token（可选）
+                // zzshare Token（可选，默认掩码显示）
                 HStack {
                     Text("zzshare Token:")
-                    TextField("留空则匿名（限频 30 次/分钟）", text: $zzshareToken)
+                    HStack(spacing: 4) {
+                        Group {
+                            if showZzshareToken {
+                                TextField("留空则匿名（限频 30 次/分钟）", text: $zzshareToken)
+                            } else {
+                                SecureField("留空则匿名（限频 30 次/分钟）", text: $zzshareToken)
+                            }
+                        }
                         .textFieldStyle(.roundedBorder)
                         .font(.system(size: 12, design: .monospaced))
                         .frame(width: 260)
                         .onChange(of: zzshareToken) { _, _ in saveZzshareToken() }
+                        Button {
+                            showZzshareToken.toggle()
+                        } label: {
+                            Image(systemName: showZzshareToken ? "eye.slash" : "eye")
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundColor(.secondary)
+                        .help(showZzshareToken ? "隐藏 Token" : "显示 Token")
+                    }
                     Link("前往注册", destination: URL(string: "https://quant.zizizaizai.com/me/profile")!)
                         .font(.caption)
                     Spacer()
