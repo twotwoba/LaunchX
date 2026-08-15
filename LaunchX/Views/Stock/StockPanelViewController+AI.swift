@@ -34,12 +34,14 @@ extension StockPanelViewController {
                     try await StockAIAnalyzer.shared.analyzeAgent(
                         bundles: copies, template: template, model: model,
                         onDelta: { [weak self] chunk in self?.appendAI(chunk) },
+                        onReasoning: { [weak self] chunk in self?.appendAI(chunk, style: .reasoning) },
                         onEvent: { [weak self] ev in self?.handleAgentEvent(ev) }
                     )
                 } else {
                     try await StockAIAnalyzer.shared.analyzeQuick(
                         bundles: copies, template: template, model: model,
-                        onDelta: { [weak self] chunk in self?.appendAI(chunk) }
+                        onDelta: { [weak self] chunk in self?.appendAI(chunk) },
+                        onReasoning: { [weak self] chunk in self?.appendAI(chunk, style: .reasoning) }
                     )
                 }
             } catch is CancellationError {
@@ -57,13 +59,26 @@ extension StockPanelViewController {
 
     // MARK: - 流式追加（主线程）
 
-    func appendAI(_ chunk: String, error: Bool = false) {
+    enum AIOutputStyle {
+        case normal
+        case reasoning
+        case error
+    }
+
+    func appendAI(_ chunk: String, error: Bool = false, style: AIOutputStyle? = nil) {
+        let resolved: AIOutputStyle = style ?? (error ? .error : .normal)
         DispatchQueue.main.async { [weak self] in
             guard let self = self, let tv = self.aiTextView else { return }
             let attrs: [NSAttributedString.Key: Any]
-            if error {
+            switch resolved {
+            case .error:
                 attrs = [.foregroundColor: NSColor.systemRed, .font: NSFont.systemFont(ofSize: 13)]
-            } else {
+            case .reasoning:
+                attrs = [
+                    .foregroundColor: NSColor.tertiaryLabelColor,
+                    .font: NSFont.systemFont(ofSize: 11),
+                ]
+            case .normal:
                 attrs = [.foregroundColor: NSColor.labelColor, .font: NSFont.systemFont(ofSize: 13)]
             }
             let attr = NSAttributedString(string: chunk, attributes: attrs)

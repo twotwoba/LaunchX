@@ -27,9 +27,11 @@ final class StockAIAnalyzer {
     // MARK: - A 模式：快速分析
 
     /// bundles：已取好的数据；onDelta 收到增量文本（主线程）。
+    /// onReasoning 收到推理模型的思考增量（deepseek-reasoner / v4 系列的 reasoning_content）。
     func analyzeQuick(
         bundles: [StockDataBundle], template: StockPromptTemplate, model: AIModelConfig,
-        onDelta: @escaping (String) -> Void
+        onDelta: @escaping (String) -> Void,
+        onReasoning: @escaping (String) -> Void = { _ in }
     ) async throws {
         let user = buildUserMessage(template: template, bundles: bundles, includeData: true)
         let messages: [[String: Any]] = [
@@ -37,7 +39,7 @@ final class StockAIAnalyzer {
             ["role": "user", "content": user],
         ]
         let (content, _) = try await streamChat(
-            model: model, messages: messages, tools: nil, onDelta: onDelta)
+            model: model, messages: messages, tools: nil, onDelta: onDelta, onReasoning: onReasoning)
         if content.isEmpty { onDelta("（模型未返回内容）") }
     }
 
@@ -47,6 +49,7 @@ final class StockAIAnalyzer {
     func analyzeAgent(
         bundles: [StockDataBundle], template: StockPromptTemplate, model: AIModelConfig,
         onDelta: @escaping (String) -> Void,
+        onReasoning: @escaping (String) -> Void = { _ in },
         onEvent: @escaping (StockAgentEvent) -> Void
     ) async throws {
         let user = buildUserMessage(template: template, bundles: bundles, includeData: false)
@@ -59,7 +62,7 @@ final class StockAIAnalyzer {
         for iteration in 0..<8 {
             do {
                 let (content, toolCalls) = try await streamChat(
-                    model: model, messages: messages, tools: tools, onDelta: onDelta)
+                    model: model, messages: messages, tools: tools, onDelta: onDelta, onReasoning: onReasoning)
                 if toolCalls.isEmpty {
                     if content.isEmpty { onDelta("（模型未返回内容）") }
                     return
@@ -95,7 +98,8 @@ final class StockAIAnalyzer {
     /// 发起流式请求，返回 (完整 content, 解析出的 tool_calls)
     private func streamChat(
         model: AIModelConfig, messages: [[String: Any]], tools: [[String: Any]]?,
-        onDelta: @escaping (String) -> Void
+        onDelta: @escaping (String) -> Void,
+        onReasoning: @escaping (String) -> Void = { _ in }
     ) async throws -> (String, [PendingToolCall]) {
         let urlString = Self.endpointURL(baseURL: model.baseURL)
         guard let url = URL(string: urlString) else { throw StockAIError.invalidURL }
@@ -123,13 +127,14 @@ final class StockAIAnalyzer {
         if let http = response as? HTTPURLResponse {
             if http.statusCode == 401 { throw StockAIError.network("API Key 无效 (401)") }
             if !(200...299).contains(http.statusCode) {
-                // 部分端点不支持 tools 时返回 400 且 body 提示
-                if tools != nil { throw StockAIError.toolsNotSupported }
+                // 部分端点不支持 tools 时返回 400 且 body 提示；其余状态码（429/5xx…）是真实错误
+                if tools != nil && http.statusCode == 400 { throw StockAIError.toolsNotSupported }
                 throw StockAIError.network("HTTP \(http.statusCode)")
             }
         }
 
         var content = ""
+        var hasReasoning = false
         var pending: [Int: PendingToolCall] = [:]
         let decoder = JSONDecoder()
 
@@ -142,7 +147,19 @@ final class StockAIAnalyzer {
                 let obj = try? decoder.decode(StreamChunk.self, from: data),
                 let delta = obj.choices.first?.delta
             else { continue }
+            if let r = delta.reasoningContent, !r.isEmpty {
+                if !hasReasoning {
+                    hasReasoning = true
+                    onReasoning("🤔 思考中：")
+                }
+                onReasoning(r)
+            }
             if let c = delta.content, !c.isEmpty {
+                if hasReasoning {
+                    // 思考结束，换行后再输出正文
+                    hasReasoning = false
+                    onDelta("\n\n")
+                }
                 content += c
                 onDelta(c)
             }
@@ -290,9 +307,11 @@ private struct StreamChunk: Decodable {
                 let function: Fn?
             }
             let content: String?
+            let reasoningContent: String?
             let toolCalls: [ToolCall]?
             enum CodingKeys: String, CodingKey {
                 case content
+                case reasoningContent = "reasoning_content"
                 case toolCalls = "tool_calls"
             }
         }
