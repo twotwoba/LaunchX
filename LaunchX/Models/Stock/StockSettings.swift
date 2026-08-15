@@ -57,7 +57,7 @@ struct StockPromptTemplate: Identifiable, Codable, Hashable {
         systemPrompt:
             "你是一位严谨的 A 股投研分析师。请基于给出的数据，从基本面、技术面、资金面、筹码结构等多维度客观分析，"
             + "给出 T+1 是否值得关注、T+2 是否存在反弹/盈利可能的判断与理由。"
-            + "务必给出明确结论与风险点，语气客观，不夸大。最后附上「免责声明：仅供参考，不构成投资建议」。",
+            + "务必给出明确结论与风险点，语气客观，不夸大。",
         userPromptTemplate:
             "请分析以下股票在 {date}（或最新交易日）的表现：{stocks}\n\n" +
             "可用数据如下：\n{data}\n\n" +

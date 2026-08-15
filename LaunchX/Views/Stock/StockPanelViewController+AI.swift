@@ -4,6 +4,12 @@ import Foundation
 extension StockPanelViewController {
 
     @objc func performAnalyze() {
+        // 分析中或已有成功结果：按钮退化为「滚动定位到 AI 区」，不重复请求接口；
+        // 上次失败则允许直接重试（重试路径会先清空 AI 区）。重新发起全新分析需先「查询」
+        if isAnalyzing || (!(aiTextView?.string ?? "").isEmpty && !lastAnalysisFailed) {
+            scrollToShowAI()
+            return
+        }
         guard let model = settings.defaultModel else {
             appendAI("\n⚠️ 请先在设置中配置 AI 模型（URL/Key/Model）", error: true)
             return
@@ -29,6 +35,8 @@ extension StockPanelViewController {
 
         analyzeTask = Task { [weak self] in
             guard let self = self else { return }
+            self.isAnalyzing = true
+            self.lastAnalysisFailed = false
             do {
                 if mode == .agent {
                     try await StockAIAnalyzer.shared.analyzeAgent(
@@ -47,9 +55,11 @@ extension StockPanelViewController {
             } catch is CancellationError {
                 // 被新分析/查询取消，静默
             } catch {
+                self.lastAnalysisFailed = true
                 self.appendAI("\n\n❌ 分析失败：\(error.localizedDescription)", error: true)
             }
             await MainActor.run {
+                self.isAnalyzing = false
                 self.setLoading(false)
                 self.analyzeButton?.isEnabled = true
                 self.agentEventLabel?.stringValue = ""

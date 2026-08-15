@@ -176,7 +176,7 @@ extension StockPanelViewController {
         containerView.addSubview(outerScroll)
         self.contentScrollView = outerScroll
 
-        let doc = NSView()
+        let doc = StockFlippedContentView()
         doc.translatesAutoresizingMaskIntoConstraints = false
         outerScroll.documentView = doc
         self.contentDocView = doc
@@ -378,7 +378,9 @@ extension StockPanelViewController {
 
     private func makeTextView() -> NSTextView {
         let tv = NSTextView()
-        tv.minSize = NSSize(width: 0, height: 30)
+        // minSize 高度必须为 0：非 0 时首响应若 clip 高度小于该值，NSTextView 会自滚动
+        // 保证插入点可见，把光标顶出输入框（首次打开光标偏高一截的根因）
+        tv.minSize = NSSize(width: 0, height: 0)
         tv.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         tv.isVerticallyResizable = true
         tv.isHorizontallyResizable = false
@@ -423,4 +425,13 @@ extension StockPanelViewController {
         return btn
     }
 
+}
+
+// MARK: - 滚动内容容器
+
+/// 外层滚动视图的 documentView：flipped（y=0 为顶部），
+/// 使 scroll(to:) 的坐标方向与直觉一致（正 y 向下滚向 AI 区）。
+/// 普通 NSView 非 flipped（y=0 为底部），滚动目标会上下颠倒。
+final class StockFlippedContentView: NSView {
+    override var isFlipped: Bool { true }
 }

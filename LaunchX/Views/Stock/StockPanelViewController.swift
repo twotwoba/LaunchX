@@ -42,11 +42,15 @@ class StockPanelViewController: NSViewController {
     var settings = StockSettings.load()
     /// 最近一次查询结果（供导出/分析使用）
     var bundles: [StockDataBundle] = []
+    /// 是否正在进行 AI 分析（按钮在此期间退化为「滚动定位」）
+    var isAnalyzing = false
+    /// 最近一次分析是否失败（失败时按钮允许直接重试，而不是仅滚动定位）
+    var lastAnalysisFailed = false
     /// 当前查询/分析任务（用于取消）
     var queryTask: Task<Void, Never>?
     var analyzeTask: Task<Void, Never>?
 
-    let inputMinHeight: CGFloat = 44
+    let inputMinHeight: CGFloat = 34
     let inputMaxHeight: CGFloat = 90
 
     // MARK: - 生命周期
@@ -106,6 +110,9 @@ class StockPanelViewController: NSViewController {
     }
 
     func focusInput() {
+        // 先让布局与垂直居中稳定再聚焦，避免首次打开插入点画在输入框外
+        view.layoutSubtreeIfNeeded()
+        updateInputHeight()
         view.window?.makeFirstResponder(inputTextView)
     }
 

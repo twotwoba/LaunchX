@@ -241,6 +241,9 @@ function initChart() {
     // createTicks 需以组件为 this 调用（内部用 convertToPixel），故传 function 而非箭头函数
     chart.overrideXAxis({ createTicks: function (ctx) { return intraCreateTicks.call(this, ctx); } });
   } catch (e) { /* 旧版本无此能力则维持默认刻度 */ }
+  // 禁用 Y 轴上的滚动/拖拽缩放（主图价格轴 + VOL/MACD 副图量轴都会破坏自适应布局且无法恢复）；
+  // 不指定 paneId 时作用于全部窗格的 Y 轴。时间轴（X 轴）缩放保留。
+  try { chart.overrideYAxis({ scrollZoomEnabled: false }); } catch (e) {}
   // 主图叠加 MA5/10/30/60（不建独立窗格）；副图：VOL、MACD（固定 paneId 便于调高度）
   chart.createIndicator({ name: 'MA', calcParams: [5, 10, 30, 60], paneId: 'candle_pane' });
   chart.createIndicator({ name: 'VOLW', paneId: 'pane_vol' });
