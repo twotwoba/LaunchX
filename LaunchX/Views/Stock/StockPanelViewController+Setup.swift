@@ -61,7 +61,7 @@ extension StockPanelViewController {
 
         // 头部居中：数据来源声明
         let disclaimer = NSTextField(
-            labelWithString: "数据来源：东方财富 · 仅供学习参考，不构成投资建议")
+            labelWithString: "数据来源：腾讯 · 新浪 · zzshare · 仅供学习参考，不构成投资建议")
         disclaimer.font = .systemFont(ofSize: 10)
         disclaimer.textColor = .tertiaryLabelColor
         disclaimer.translatesAutoresizingMaskIntoConstraints = false

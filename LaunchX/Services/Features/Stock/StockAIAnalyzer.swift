@@ -214,9 +214,7 @@ final class StockAIAnalyzer {
                 return "获取技术指标失败：\(error.localizedDescription)"
             }
         case "get_capital_flow":
-            let flows = await StockDataService.shared.fetchCapitalFlow(
-                secid: secid, lmt: max(5, min(days, 30)))
-            return formatFlows(flows.suffix(days))
+            return "资金流数据已下线（原东财源移除，暂无替代数据源）"
         default:
             return "未知工具：\(call.name)"
         }
@@ -368,21 +366,7 @@ extension StockAIAnalyzer {
                 ] as [String: Any],
             ] as [String: Any],
         ],
-        [
-            "type": "function",
-            "function": [
-                "name": "get_capital_flow",
-                "description": "获取最近 N 日的资金流向（主力/超大单/大单/中单/小单净流入）",
-                "parameters": [
-                    "type": "object",
-                    "properties": [
-                        "secid": ["type": "string"],
-                        "days": ["type": "integer", "description": "天数，默认10，最大30"],
-                    ] as [String: Any],
-                    "required": ["secid"],
-                ] as [String: Any],
-            ] as [String: Any],
-        ],
+        // get_capital_flow 已移除：资金流仅东财提供，东财源下线后无替代数据源
     ]
 
     private static func assistantToolMessage(content: String, toolCalls: [PendingToolCall]) -> [String: Any] {

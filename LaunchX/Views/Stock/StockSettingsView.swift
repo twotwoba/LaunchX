@@ -9,6 +9,8 @@ struct StockSettingsView: View {
     @State private var editingModel: AIModelConfig?
     @State private var showAddTemplateSheet = false
     @State private var editingTemplate: StockPromptTemplate?
+    /// zzshare 可选 Token（key 与 defaults write 兼容）；留空 = 匿名
+    @State private var zzshareToken = UserDefaults.standard.string(forKey: "zzshare_sdk_key") ?? ""
 
     private let labelWidth: CGFloat = 140
 
@@ -169,25 +171,46 @@ struct StockSettingsView: View {
 
                 Divider().padding(.top, 16)
 
+                // zzshare Token（可选）
+                HStack {
+                    Text("zzshare Token:")
+                    TextField("留空则匿名（限频 30 次/分钟）", text: $zzshareToken)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 12, design: .monospaced))
+                        .frame(width: 260)
+                        .onChange(of: zzshareToken) { _, _ in saveZzshareToken() }
+                    Link("前往注册", destination: URL(string: "https://quant.zizizaizai.com/me/profile")!)
+                        .font(.caption)
+                    Spacer()
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 16)
+                Text("（可选）免费注册后填入 token 可适当提高接口的访问频率。")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 4)
+
                 // 网络与数据源说明
                 VStack(alignment: .leading, spacing: 6) {
                     Text("网络与数据源")
                         .font(.subheadline).fontWeight(.medium)
                     Text(
-                        "主数据源为东方财富，失败时自动重试并降级到新浪（部分字段缺失，卡片上会标注）。"
+                        "日K/快照/搜索走腾讯，历史分时走 zzshare，失败时自动降级到新浪（部分字段缺失，卡片上会标注）。"
                             + "若查询频繁报「网络连接丢失」，常见原因与对策：")
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .textSelection(.enabled)
                     Text(
                         "1. 使用代理/VPN 软件时，建议为以下域名添加直连规则（国内财经接口直连更快更稳）：\n"
-                            + "DOMAIN-SUFFIX,eastmoney.com,DIRECT\n"
+                            + "DOMAIN-SUFFIX,gtimg.cn,DIRECT\n"
+                            + "DOMAIN-SUFFIX,zizizaizai.com,DIRECT\n"
                             + "DOMAIN-SUFFIX,sina.cn,DIRECT\n"
                             + "DOMAIN-SUFFIX,sinajs.cn,DIRECT")
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundColor(.secondary)
                         .textSelection(.enabled)
-                    Text("2. 东方财富接口对高频访问有限流，被限流时通常几分钟到几小时后自动恢复；期间应用会自动切新浪兜底，不影响基础查询。")
+                    Text("2. zzshare 匿名限频 30 次/分钟，超限会自动降级到新浪分钟K（粒度变粗，几分钟后恢复）。已拉取的历史分时会缓存，重开不重复请求；填入上方免费 Token 可提高限额。")
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .textSelection(.enabled)
@@ -196,7 +219,7 @@ struct StockSettingsView: View {
                 .padding(.top, 16)
 
                 // 免责
-                Text("数据来源：东方财富 · 仅供学习参考，不构成投资建议")
+                Text("数据来源：腾讯 · 新浪 · zzshare · 仅供学习参考，不构成投资建议")
                     .font(.caption2)
                     .foregroundColor(.secondary)
                     .padding(.horizontal, 20)
@@ -241,6 +264,17 @@ struct StockSettingsView: View {
         }
         .background(Color(nsColor: .controlBackgroundColor))
         .cornerRadius(8)
+    }
+
+    // MARK: - zzshare Token
+
+    private func saveZzshareToken() {
+        let trimmed = zzshareToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            UserDefaults.standard.removeObject(forKey: "zzshare_sdk_key")
+        } else {
+            UserDefaults.standard.set(trimmed, forKey: "zzshare_sdk_key")
+        }
     }
 
     // MARK: - 模型管理

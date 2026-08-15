@@ -103,6 +103,8 @@ final class StockChartView: NSView, WKNavigationDelegate, WKScriptMessageHandler
                 "open": bar.open, "high": bar.high, "low": bar.low, "close": bar.close,
                 "volume": bar.volume, "turnover": bar.amount,
                 "turnoverRate": bar.turnover, "volumeRatio": volumeRatio,
+                // 首根无昨收，null → 图例涨跌幅显示 "--"
+                "pct": i == 0 ? NSNull() : bar.pctChange,
             ] as [String: Any]
         }.sorted { ($0["timestamp"] as? Int ?? 0) < ($1["timestamp"] as? Int ?? 0) }
         guard !payload.isEmpty,

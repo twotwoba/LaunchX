@@ -100,8 +100,13 @@ const CHART_STYLES = {
     tooltip: {
       title: { show: false },
       legend: {
-        template: ({ current }) => {
+        template: ({ prev, current }) => {
           const fmt2 = (v) => (v == null || isNaN(v)) ? '--' : v.toFixed(2);
+          // 成交量（手）→ 中文习惯单位：万手 / 亿手
+          const fmtVol = (v) => (v == null || isNaN(v) || v <= 0) ? '--'
+            : v >= 1e8 ? (v / 1e8).toFixed(2) + '亿手'
+            : v >= 1e4 ? (v / 1e4).toFixed(2) + '万手'
+            : v.toFixed(0) + '手';
           if (isIntraday) {
             // 分时：只要 开/收/涨跌幅（相对昨收）；时间/高低/量去掉
             let pct = null;
@@ -114,13 +119,26 @@ const CHART_STYLES = {
               { title: '涨跌幅', value: pct == null ? '--' : (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%' },
             ];
           }
+          // 日K涨跌幅：优先用 Swift 逐 bar 注入的 pct（首根无昨收为 null），
+          // 缺失时退化用前一根收盘推算
+          let pct = null;
+          if (current && current.pct != null) {
+            pct = current.pct;
+          } else if (current && prev && prev.close > 0 && current.close != null) {
+            pct = (current.close - prev.close) / prev.close * 100;
+          }
           const rows = [
             { title: 'time', value: '{time}' },
             { title: 'open', value: '{open}' },
             { title: 'high', value: '{high}' },
             { title: 'low', value: '{low}' },
             { title: 'close', value: '{close}' },
-            { title: 'volume', value: '{volume}' },
+            {
+              title: '涨跌幅',
+              value: pct == null ? '--' : (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%',
+              color: pct == null ? undefined : (pct >= 0 ? '#f6465d' : '#2ebd85'),
+            },
+            { title: 'volume', value: fmtVol(current && current.volume) },
           ];
           if (current && current.turnoverRate > 0) {
             rows.push({ title: '换手', value: current.turnoverRate.toFixed(2) + '%' });
@@ -228,7 +246,7 @@ function initChart() {
   } catch (e) { /* 旧版本无此能力则维持默认刻度 */ }
   // 主图叠加 MA5/10/30/60（不建独立窗格）；副图：VOL、MACD（固定 paneId 便于调高度）
   chart.createIndicator({ name: 'MA', calcParams: [5, 10, 30, 60], paneId: 'candle_pane' });
-  chart.createIndicator({ name: 'VOL', paneId: 'pane_vol' });
+  chart.createIndicator({ name: 'VOLW', paneId: 'pane_vol' });
   chart.createIndicator({ name: 'MACD', paneId: 'pane_macd' });
   applyPaneHeights();
   // v10 数据加载契约：经 setDataLoader 提供数据（无 applyNewData）；
@@ -337,6 +355,30 @@ try {
   });
 } catch (e) { /* 已注册或旧版本 */ }
 
+// 日K量柱（万手）：内置 VOL 显示原始手数，大盘股日成交几十万手 → 轴与图例数字过长。
+// 按 1 万手缩放展示（柱形比例不变），颜色与蜡烛同规则（收 ≥ 开 → 红），
+// 用「收 ≥ 昨收」会在高开低走/低开高走的日子和蜡烛分叉，看着像 bug
+try {
+  klinecharts.registerIndicator({
+    name: 'VOLW',
+    shortName: 'VOL',
+    series: 'volume',
+    precision: 2,
+    minValue: 0,
+    calc: (dataList) => dataList.map((d) => ({
+      volume: (d.volume ?? 0) / 10000,
+      up: d.close >= d.open,
+    })),
+    figures: [{
+      key: 'volume', title: 'VOLUME(万手): ', type: 'bar', baseValue: 0,
+      styles: (ctx) => {
+        const cur = ctx.data.current;
+        return { color: cur && cur.up ? '#f6465d' : '#2ebd85' };
+      },
+    }],
+  });
+} catch (e) { /* 已注册或旧版本 */ }
+
 // 推入全量 K 线（json 字符串），并可选定位到指定时间戳
 function updateData(json, scrollTs) {
   initChart();
@@ -376,6 +418,7 @@ function showIntraday(json, day, preClose) {
   try { chart.removeIndicator({ name: 'MACD' }); } catch (e) {}
   // VOL 的量柱按分钟内开收配色，与恒红的分时线不搭 → 换成跟价走的 MINVOL
   try { chart.removeIndicator({ name: 'VOL', paneId: 'pane_vol' }); } catch (e) {}
+  try { chart.removeIndicator({ name: 'VOLW', paneId: 'pane_vol' }); } catch (e) {}
   try { chart.createIndicator({ name: 'MINVOL', paneId: 'pane_vol' }); } catch (e) {}
   const styles = {
     candle: {
@@ -430,7 +473,7 @@ function showDaily() {
   document.getElementById('intradayBar').style.display = 'none';
   try { chart.removeIndicator({ name: 'INTRA' }); } catch (e) {}
   try { chart.removeIndicator({ name: 'MINVOL', paneId: 'pane_vol' }); } catch (e) {}
-  try { chart.createIndicator({ name: 'VOL', paneId: 'pane_vol' }); } catch (e) {}
+  try { chart.createIndicator({ name: 'VOLW', paneId: 'pane_vol' }); } catch (e) {}
   chart.setStyles({ candle: { type: 'candle_solid' } });
   try { chart.overrideYAxis({ paneId: 'candle_pane', name: 'normal' }); } catch (e) {}
   try {
