@@ -103,6 +103,9 @@ struct StockSettings: Codable {
     // Excel 导出列（StockExporter.allColumns 的 key，按此顺序输出；空则用默认集）
     var exportColumns: [String]
 
+    /// 面板上次选中的分析模板（重开面板时恢复选择）
+    var selectedTemplateID: UUID?
+
     /// 导出列默认集（分时分钟明细，key 对应 StockExporter.allColumns）
     static let defaultExportColumns = [
         "date", "open", "high", "low", "close", "avgPrice", "volume", "amount",
@@ -125,13 +128,14 @@ struct StockSettings: Codable {
 
     private enum CodingKeys: String, CodingKey {
         case isEnabled, alias, hotKeyCode, hotKeyModifiers, modelConfigs, promptTemplates
-        case panelWidth, panelHeight, exportColumns
+        case panelWidth, panelHeight, exportColumns, selectedTemplateID
     }
 
     init(
         isEnabled: Bool, alias: String, hotKeyCode: UInt32, hotKeyModifiers: UInt32,
         modelConfigs: [AIModelConfig], promptTemplates: [StockPromptTemplate],
-        panelWidth: CGFloat, panelHeight: CGFloat, exportColumns: [String]
+        panelWidth: CGFloat, panelHeight: CGFloat, exportColumns: [String],
+        selectedTemplateID: UUID? = nil
     ) {
         self.isEnabled = isEnabled
         self.alias = alias
@@ -142,6 +146,7 @@ struct StockSettings: Codable {
         self.panelWidth = panelWidth
         self.panelHeight = panelHeight
         self.exportColumns = exportColumns
+        self.selectedTemplateID = selectedTemplateID
     }
 
     /// 老配置缺少 exportColumns 字段时回落默认值，避免整体解码失败重置用户设置
@@ -167,6 +172,7 @@ struct StockSettings: Codable {
             panelHeight = 560
         }
         exportColumns = columns
+        selectedTemplateID = try c.decodeIfPresent(UUID.self, forKey: .selectedTemplateID)
     }
 
     static func load() -> StockSettings {

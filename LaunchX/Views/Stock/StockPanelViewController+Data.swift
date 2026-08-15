@@ -59,9 +59,9 @@ extension StockPanelViewController: NSTextViewDelegate {
             return
         }
 
-        // 取消上一次查询；新查询时图表重新铺满面板（折叠 AI 区）
+        // 取消上一次查询；新查询时滚回顶部图表区
         queryTask?.cancel()
-        setChartExpanded(true)
+        scrollToShowChart()
         setLoading(true)
         chartView?.showHint("正在查询…")
         setAIPlaceholder("")

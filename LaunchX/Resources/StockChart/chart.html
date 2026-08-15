@@ -129,23 +129,20 @@ const CHART_STYLES = {
           }
           const rows = [
             { title: 'time', value: '{time}' },
-            { title: 'open', value: '{open}' },
-            { title: 'high', value: '{high}' },
-            { title: 'low', value: '{low}' },
-            { title: 'close', value: '{close}' },
+            { title: '收盘价', value: fmt2(current && current.close) },
             {
               title: '涨跌幅',
               value: pct == null ? '--' : (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%',
               color: pct == null ? undefined : (pct >= 0 ? '#f6465d' : '#2ebd85'),
             },
-            { title: 'volume', value: fmtVol(current && current.volume) },
           ];
           if (current && current.turnoverRate > 0) {
-            rows.push({ title: '换手', value: current.turnoverRate.toFixed(2) + '%' });
+            rows.push({ title: '换手率', value: current.turnoverRate.toFixed(2) + '%' });
           }
           if (current && current.volumeRatio > 0) {
             rows.push({ title: '量比', value: current.volumeRatio.toFixed(2) });
           }
+          rows.push({ title: '成交量', value: fmtVol(current && current.volume) });
           return rows;
         },
       },

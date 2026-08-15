@@ -160,15 +160,31 @@ extension StockPanelViewController {
         ])
     }
 
-    // MARK: - 内容区（K 线图铺满 ⇄ 收缩给 AI 让位）
+    // MARK: - 内容区（图表 + AI 分析同处一个纵向滚动视图）
 
+    /// 结构：外层 NSScrollView 的 documentView 里依次放 K线图（高度=可视高度，永不压缩）
+    /// → 分隔线 → AI 分析区（高度=可视高度）。初始停在顶部只见图表；
+    /// 点「AI 分析」整体滚下去，用户可随时手动滚回看图表。
     func setupContentArea() {
         guard let containerView = containerView, let inputScrollView = inputScrollView else { return }
+
+        // —— 外层滚动容器（图表与 AI 区共用）——
+        let outerScroll = makeScrollView()
+        outerScroll.hasVerticalScroller = true
+        outerScroll.hasHorizontalScroller = false
+        outerScroll.horizontalScrollElasticity = .none
+        containerView.addSubview(outerScroll)
+        self.contentScrollView = outerScroll
+
+        let doc = NSView()
+        doc.translatesAutoresizingMaskIntoConstraints = false
+        outerScroll.documentView = doc
+        self.contentDocView = doc
 
         // —— 上：K 线图（WKWebView + KLineChart）——
         let chart = StockChartView(frame: .zero)
         chart.translatesAutoresizingMaskIntoConstraints = false
-        containerView.addSubview(chart)
+        doc.addSubview(chart)
         self.chartView = chart
         // 双击日K蜡烛 → 弹独立分时窗口（支持多天多开比对）
         chart.onDayDoubleClick = { [weak self] ts in self?.handleDayDoubleClick(tsMillis: ts) }
@@ -178,13 +194,14 @@ extension StockPanelViewController {
         divider.wantsLayer = true
         divider.layer?.backgroundColor = NSColor.separatorColor.cgColor
         divider.translatesAutoresizingMaskIntoConstraints = false
-        containerView.addSubview(divider)
+        doc.addSubview(divider)
         self.contentDivider = divider
 
         // —— 下：AI 分析（事件提示 + 文本滚动）——
         let aiContainer = NSView()
         aiContainer.translatesAutoresizingMaskIntoConstraints = false
-        containerView.addSubview(aiContainer)
+        doc.addSubview(aiContainer)
+        self.aiContainerView = aiContainer
 
         let eventLabel = NSTextField(labelWithString: "")
         eventLabel.font = .systemFont(ofSize: 11)
@@ -195,40 +212,45 @@ extension StockPanelViewController {
 
         let aiScroll = makeScrollView()
         aiContainer.addSubview(aiScroll)
+        self.aiScrollView = aiScroll
 
         let aiTV = makeTextView()
         aiTV.isEditable = false
         aiTV.font = .systemFont(ofSize: 13)
         aiScroll.documentView = aiTV
-        self.aiScrollView = aiScroll
         self.aiTextView = aiTV
 
-        // 铺满态：图表一直伸到面板底部（divider / AI 区隐藏）
-        let expanded = [
-            chart.bottomAnchor.constraint(equalTo: containerView.bottomAnchor, constant: -10)
-        ]
-        self.chartExpandedConstraints = expanded
-
-        // 收缩态：图表下方露出 divider + AI 分析区（AI 区底部顶到面板底）
-        let compact = [
-            divider.topAnchor.constraint(equalTo: chart.bottomAnchor, constant: 4),
-            aiContainer.topAnchor.constraint(equalTo: divider.bottomAnchor, constant: 4),
-            aiContainer.bottomAnchor.constraint(equalTo: containerView.bottomAnchor, constant: -10),
-        ]
-        self.aiAreaConstraints = compact
-
+        let clip = outerScroll.contentView
         NSLayoutConstraint.activate([
-            // 图表区：顶部接输入框，底部在两套约束间切换
-            chart.topAnchor.constraint(equalTo: inputScrollView.bottomAnchor, constant: 6),
-            chart.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 16),
-            chart.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -16),
+            // 外层滚动视图占据输入框以下整个内容区
+            outerScroll.topAnchor.constraint(equalTo: inputScrollView.bottomAnchor, constant: 6),
+            outerScroll.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 16),
+            outerScroll.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -16),
+            outerScroll.bottomAnchor.constraint(equalTo: containerView.bottomAnchor, constant: -10),
 
-            divider.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 16),
-            divider.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -16),
+            // documentView 与滚动区等宽（无边框时 scrollView 边即可视区边）、高度由内容撑开
+            doc.leadingAnchor.constraint(equalTo: outerScroll.leadingAnchor),
+            doc.trailingAnchor.constraint(equalTo: outerScroll.trailingAnchor),
+            doc.topAnchor.constraint(equalTo: clip.topAnchor),
+            doc.bottomAnchor.constraint(greaterThanOrEqualTo: clip.bottomAnchor),
+
+            // 图表：占满首屏可视高度（宽高不随 AI 区出现而变化）
+            chart.topAnchor.constraint(equalTo: doc.topAnchor),
+            chart.leadingAnchor.constraint(equalTo: doc.leadingAnchor),
+            chart.trailingAnchor.constraint(equalTo: doc.trailingAnchor),
+            chart.heightAnchor.constraint(equalTo: outerScroll.heightAnchor, constant: -10),
+
+            divider.topAnchor.constraint(equalTo: chart.bottomAnchor, constant: 4),
+            divider.leadingAnchor.constraint(equalTo: doc.leadingAnchor),
+            divider.trailingAnchor.constraint(equalTo: doc.trailingAnchor),
             divider.heightAnchor.constraint(equalToConstant: 1),
 
-            aiContainer.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 16),
-            aiContainer.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -16),
+            // AI 区：同样占一屏高度，文本在其内部滚动
+            aiContainer.topAnchor.constraint(equalTo: divider.bottomAnchor, constant: 4),
+            aiContainer.leadingAnchor.constraint(equalTo: doc.leadingAnchor),
+            aiContainer.trailingAnchor.constraint(equalTo: doc.trailingAnchor),
+            aiContainer.heightAnchor.constraint(equalTo: outerScroll.heightAnchor, constant: -10),
+            aiContainer.bottomAnchor.constraint(equalTo: doc.bottomAnchor),
 
             eventLabel.topAnchor.constraint(equalTo: aiContainer.topAnchor, constant: 6),
             eventLabel.leadingAnchor.constraint(equalTo: aiContainer.leadingAnchor, constant: 12),
@@ -239,44 +261,39 @@ extension StockPanelViewController {
             aiScroll.trailingAnchor.constraint(equalTo: aiContainer.trailingAnchor),
             aiScroll.bottomAnchor.constraint(equalTo: aiContainer.bottomAnchor),
         ])
-
-        // 初始铺满
-        NSLayoutConstraint.activate(chartExpandedConstraints)
-        divider.isHidden = true
-        aiContainer.isHidden = true
     }
 
-    // MARK: - 图表铺满 ⇄ 收缩（AI 分析时下方让位）
+    // MARK: - 图表 ⇄ AI 区滚动切换（图表宽高不变，整体上下滚动）
 
-    /// true：图表铺满面板；false：图表上移，下方展示 AI 分析文字
-    func setChartExpanded(_ expanded: Bool, animated: Bool = true) {
-        guard expanded != chartExpanded else { return }
-        chartExpanded = expanded
+    /// 滚到顶部：图表占满可视区
+    func scrollToShowChart(animated: Bool = true) {
+        scrollContentView(to: 0, animated: animated)
+    }
 
-        let apply = { [weak self] in
-            guard let self = self else { return }
-            if expanded {
-                NSLayoutConstraint.deactivate(self.aiAreaConstraints)
-                NSLayoutConstraint.activate(self.chartExpandedConstraints)
-            } else {
-                NSLayoutConstraint.deactivate(self.chartExpandedConstraints)
-                NSLayoutConstraint.activate(self.aiAreaConstraints)
-            }
-            self.contentDivider?.isHidden = expanded
-            self.aiScrollView?.isHidden = expanded
-            self.agentEventLabel?.isHidden = expanded
-            self.view.layoutSubtreeIfNeeded()
-        }
+    /// 滚到底部：露出图表下方的 AI 分析区
+    func scrollToShowAI(animated: Bool = true) {
+        guard let outer = contentScrollView, let doc = contentDocView else { return }
+        view.layoutSubtreeIfNeeded()
+        let y = max(0, doc.frame.height - outer.contentView.bounds.height)
+        scrollContentView(to: y, animated: animated)
+    }
 
+    private func scrollContentView(to y: CGFloat, animated: Bool) {
+        guard let outer = contentScrollView else { return }
+        let clip = outer.contentView
+        let target = NSPoint(x: 0, y: y)
         if animated {
             NSAnimationContext.runAnimationGroup({ ctx in
                 ctx.duration = 0.35
                 ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
                 ctx.allowsImplicitAnimation = true
-                apply()
+                clip.animator().setBoundsOrigin(target)
+            }, completionHandler: {
+                outer.reflectScrolledClipView(clip)
             })
         } else {
-            apply()
+            clip.scroll(to: target)
+            outer.reflectScrolledClipView(clip)
         }
     }
 
@@ -317,7 +334,14 @@ extension StockPanelViewController {
             item.representedObject = t.id
             popup.menu?.addItem(item)
         }
-        popup.selectItem(at: 0)
+        // 恢复上次选中的模板；已删除/禁用的回落到第一个
+        if let id = settings.selectedTemplateID,
+            let item = popup.itemArray.first(where: { ($0.representedObject as? UUID) == id })
+        {
+            popup.select(item)
+        } else {
+            popup.selectItem(at: 0)
+        }
     }
 
     // MARK: - 当前选择
@@ -342,7 +366,13 @@ extension StockPanelViewController {
         StockPanelManager.shared.togglePinned()
     }
 
-    @objc func templateChanged() {}
+    @objc func templateChanged() {
+        // 记住选择，重开面板时恢复
+        if let id = templatePopup?.selectedItem?.representedObject as? UUID {
+            settings.selectedTemplateID = id
+            settings.save()
+        }
+    }
 
     // MARK: - UI 工厂
 

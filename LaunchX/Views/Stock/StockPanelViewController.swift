@@ -23,17 +23,16 @@ class StockPanelViewController: NSViewController {
     var templatePopup: NSPopUpButton?
     var analyzeButton: NSButton?
 
-    // 内容分栏
+    // 内容分栏（整体放在一个纵向 NSScrollView 里：图表占满首屏，AI 分析区在其下方，
+    // 点「AI 分析」滚下去、查询后滚回来；图表宽高始终保持面板可视尺寸不变）
     var contentDivider: NSView?
     var chartView: StockChartView?
+    var contentScrollView: NSScrollView?
+    var contentDocView: NSView?
+    var aiContainerView: NSView?
     var aiScrollView: NSScrollView?
     var aiTextView: NSTextView?
     var agentEventLabel: NSTextField?  // B 模式工具进度
-
-    // 图表铺满 ⇄ 收缩给 AI 让位的两套约束
-    var chartExpandedConstraints: [NSLayoutConstraint] = []
-    var aiAreaConstraints: [NSLayoutConstraint] = []
-    var chartExpanded = true
 
     var loadingIndicator: NSProgressIndicator?
     var disclaimerLabel: NSTextField?

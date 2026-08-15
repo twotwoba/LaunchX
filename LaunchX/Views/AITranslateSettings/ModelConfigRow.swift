@@ -35,29 +35,29 @@ struct ModelConfigRow: View {
 
             Spacer()
 
-            if isHovered {
-                HStack(spacing: 8) {
-                    if !isDefault {
-                        Button(action: onSetDefault) {
-                            Text("设为默认")
-                                .font(.caption)
-                        }
-                        .buttonStyle(.bordered)
+            HStack(spacing: 8) {
+                if !isDefault {
+                    Button(action: onSetDefault) {
+                        Text("设为默认")
+                            .font(.caption)
                     }
-
-                    Button(action: onEdit) {
-                        Image(systemName: "pencil")
-                            .font(.system(size: 12))
-                    }
-                    .buttonStyle(.borderless)
-
-                    Button(action: onDelete) {
-                        Image(systemName: "trash")
-                            .font(.system(size: 12))
-                            .foregroundColor(.red)
-                    }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(.bordered)
                 }
+
+                Button(action: onEdit) {
+                    Image(systemName: "pencil")
+                        .font(.system(size: 12))
+                }
+                .buttonStyle(.borderless)
+                .help("编辑")
+
+                Button(action: onDelete) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 12))
+                        .foregroundColor(.red)
+                }
+                .buttonStyle(.borderless)
+                .help("删除")
             }
         }
         .padding(.vertical, 8)
