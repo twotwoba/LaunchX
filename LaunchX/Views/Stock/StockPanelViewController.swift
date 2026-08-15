@@ -56,7 +56,7 @@ class StockPanelViewController: NSViewController {
     // MARK: - 生命周期
 
     override func loadView() {
-        view = NSView(frame: NSRect(x: 0, y: 0, width: 820, height: 560))
+        view = NSView(frame: NSRect(x: 0, y: 0, width: 680, height: 520))
         view.wantsLayer = true
     }
 

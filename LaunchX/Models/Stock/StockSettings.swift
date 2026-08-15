@@ -119,8 +119,8 @@ struct StockSettings: Codable {
         hotKeyModifiers: 0,
         modelConfigs: [],
         promptTemplates: [.defaultComprehensive, .defaultTechnical],
-        panelWidth: 820,
-        panelHeight: 560,
+        panelWidth: 680,
+        panelHeight: 520,
         exportColumns: defaultExportColumns
     )
 
@@ -165,11 +165,6 @@ struct StockSettings: Codable {
         // 迁移：老配置补上新增的日级列（涨跌幅/量比/换手率），只追加一次
         if columns.contains("amount"), !columns.contains("pctChange") {
             columns += ["pctChange", "volumeRatio", "turnover"]
-        }
-        // 迁移：旧默认尺寸 720×520 升级为新默认 820×560（用户手动改过尺寸的不受影响）
-        if panelWidth == 720 && panelHeight == 520 {
-            panelWidth = 820
-            panelHeight = 560
         }
         exportColumns = columns
         selectedTemplateID = try c.decodeIfPresent(UUID.self, forKey: .selectedTemplateID)
