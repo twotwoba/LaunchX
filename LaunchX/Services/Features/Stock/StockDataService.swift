@@ -250,11 +250,15 @@ final class StockDataService {
     // MARK: - 某日分时（多源逐级兜底）
 
     /// 某日分时：先查内存缓存（历史分时不可变），未命中走多源兜底链，
-    /// 成功且非当日的结果写入缓存。
-    func fetchIntraday(secid: String, date: String) async throws -> [StockTrendPoint] {
+    /// 成功且非当日的结果写入缓存。forceRefresh = true 时丢弃缓存重走兜底链
+    /// （用于兜底拿到粗粒度分时后手动刷新，重试 zzshare 1 分钟源）。
+    func fetchIntraday(secid: String, date: String, forceRefresh: Bool = false) async throws
+        -> [StockTrendPoint]
+    {
         let key = "\(secid)|\(date)"
         intradayCacheLock.lock()
-        let cached = intradayCache[key]
+        let cached = forceRefresh ? nil : intradayCache[key]
+        if forceRefresh { intradayCache.removeValue(forKey: key) }
         intradayCacheLock.unlock()
         if let cached { return cached }
 

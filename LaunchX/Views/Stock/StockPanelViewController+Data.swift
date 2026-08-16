@@ -120,16 +120,33 @@ extension StockPanelViewController: NSTextViewDelegate {
             day: day, code: bundle.code, name: bundle.name,
             columns: settings.exportColumns, context: intradayContext(bundle: bundle, day: day))
         let secid = bundle.secid
-        Task { [weak intradayWindow] in
+        // 标题栏刷新按钮：丢弃缓存重走兜底链，重试 zzshare 1 分钟源
+        intradayWindow.onRefresh = { [weak self, weak intradayWindow] in
+            guard let self, let w = intradayWindow else { return }
+            self.loadIntraday(secid: secid, day: day, into: w, forceRefresh: true)
+        }
+        loadIntraday(secid: secid, day: day, into: intradayWindow, forceRefresh: false)
+    }
+
+    /// 拉取某日分时并回填窗口；forceRefresh = true 丢弃缓存重走兜底链，
+    /// 失败时保留窗口里已有的粗粒度图，仅短暂提示
+    private func loadIntraday(
+        secid: String, day: String, into window: StockIntradayWindow, forceRefresh: Bool
+    ) {
+        if forceRefresh { window.beginRefresh() }
+        Task { [weak window] in
             var points: [StockTrendPoint]? = nil
             var err: String? = nil
             do {
-                points = try await StockDataService.shared.fetchIntraday(secid: secid, date: day)
+                points = try await StockDataService.shared.fetchIntraday(
+                    secid: secid, date: day, forceRefresh: forceRefresh)
             } catch { err = error.localizedDescription }
             await MainActor.run {
-                guard let w = intradayWindow else { return }
+                guard let w = window else { return }
                 if let points = points, !points.isEmpty {
                     w.render(points: points)
+                } else if forceRefresh {
+                    w.refreshFailed(message: err ?? "无数据")
                 } else {
                     w.fail(message: err ?? "无数据")
                 }

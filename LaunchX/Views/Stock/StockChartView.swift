@@ -164,6 +164,11 @@ final class StockChartView: NSView, WKNavigationDelegate, WKScriptMessageHandler
         eval("showHint(\(jsLiteral(message)))")
     }
 
+    /// 短暂提示（如手动刷新分时的进度/失败），2.4s 后自动消失，不遮挡图表
+    func showToast(_ message: String) {
+        eval("showToast(\(jsLiteral(message)))")
+    }
+
     // MARK: - JS 桥
 
     /// html 未就绪时排队，加载完成后回放

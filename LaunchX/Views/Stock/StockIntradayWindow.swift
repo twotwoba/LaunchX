@@ -12,6 +12,10 @@ final class StockIntradayWindow: NSObject, NSWindowDelegate {
     private let context: StockIntradayContext
     private let onRemove: (String) -> Void
     private var points: [StockTrendPoint] = []
+    private var refreshButton: NSButton?
+
+    /// 点击标题栏刷新按钮：丢弃缓存重新走兜底链（由数据层回填）
+    var onRefresh: (() -> Void)?
 
     init(
         key: String, day: String, title: String, columns: [String],
@@ -42,6 +46,23 @@ final class StockIntradayWindow: NSObject, NSWindowDelegate {
 
         // 复制按钮放标题栏右侧：图内右下角的百分比轴刻度会被遮挡
         if let titlebarView = w.standardWindowButton(.closeButton)?.superview {
+            // 刷新按钮（复制按钮左侧）：首点非 09:30 说明拿到的是兜底的粗粒度分钟K，才显示
+            let refreshBtn = NSButton(title: "", target: nil, action: nil)
+            refreshBtn.bezelStyle = .texturedRounded
+            refreshBtn.controlSize = .small
+            refreshBtn.image = NSImage(
+                systemSymbolName: "arrow.clockwise", accessibilityDescription: "重新获取分时")
+            refreshBtn.imageScaling = .scaleProportionallyDown
+            refreshBtn.toolTip = "重新获取分时（绕过缓存，优先 1 分钟源）"
+            refreshBtn.target = self
+            refreshBtn.action = #selector(refreshFromTitlebar)
+            refreshBtn.frame = NSRect(
+                x: titlebarView.bounds.width - 140, y: 3, width: 32, height: 24)
+            refreshBtn.autoresizingMask = [.minXMargin]
+            refreshBtn.isHidden = true
+            titlebarView.addSubview(refreshBtn)
+            self.refreshButton = refreshBtn
+
             let btn = NSButton(title: "复制 Excel", target: nil, action: nil)
             btn.bezelStyle = .texturedRounded
             btn.controlSize = .small
@@ -71,6 +92,23 @@ final class StockIntradayWindow: NSObject, NSWindowDelegate {
     func render(points: [StockTrendPoint]) {
         self.points = points
         chart.updateIntraday(points: points, day: day, preClose: context.preClose ?? 0)
+        refreshButton?.isEnabled = true
+        // 1 分钟源（腾讯 minute / 新浪 scale=1 / zzshare）首点都会落在 09:30
+        // （后两者会补集合竞价点）；不是 09:30 起步 = 兜底链滑到了粗粒度分钟K
+        let firstMinute = points.first.map { String($0.time.dropFirst(11).prefix(5)) } ?? ""
+        refreshButton?.isHidden = (firstMinute == "09:30")
+    }
+
+    /// 手动刷新开始：按钮去抖 + 图上短暂提示（不清空当前粗粒度图）
+    func beginRefresh() {
+        refreshButton?.isEnabled = false
+        chart.showToast("正在重新获取分时…")
+    }
+
+    /// 手动刷新失败：保留当前粗粒度图，仅提示失败原因
+    func refreshFailed(message: String) {
+        refreshButton?.isEnabled = true
+        chart.showToast("刷新失败：\(message)")
     }
 
     /// 查询失败：错误显示在分时窗口内（窗口保留，用户可关闭）
@@ -88,6 +126,11 @@ final class StockIntradayWindow: NSObject, NSWindowDelegate {
     @objc private func copyExcelFromTitlebar() {
         guard !points.isEmpty else { return }
         StockExporter.copyIntradayDay(points: points, day: day, columns: columns, context: context)
+    }
+
+    /// 标题栏「刷新」按钮：重新走兜底链取 1 分钟分时
+    @objc private func refreshFromTitlebar() {
+        onRefresh?()
     }
 
     // MARK: - NSWindowDelegate

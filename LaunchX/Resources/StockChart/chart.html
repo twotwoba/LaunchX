@@ -20,6 +20,13 @@
     font: -apple-system 13px; color: #ff6b6b; text-align: center;
     background: rgba(0,0,0,0.15); white-space: pre-wrap;
   }
+  /* 短暂提示（如手动刷新分时）：不遮挡图表，约 2.4s 后自动消失 */
+  #toast {
+    position: absolute; top: 34px; left: 50%; transform: translateX(-50%);
+    display: none; z-index: 30; padding: 4px 10px; border-radius: 6px;
+    font: -apple-system 12px; color: rgba(255,255,255,0.9);
+    background: rgba(0,0,0,0.6); white-space: nowrap; pointer-events: none;
+  }
   /* 分时模式顶栏：日期 + 复制 + 返回 */
   #intradayBar {
     position: absolute; top: 6px; left: 0; right: 0; z-index: 15;
@@ -50,6 +57,7 @@
 </div>
 <div id="hint">输入股票后回车，K 线图将显示在这里</div>
 <div id="error"></div>
+<div id="toast"></div>
 <script>
 /* ===== KLineChart v10.0.2 (Apache-2.0) 内联开始 ===== */
 /**
@@ -524,6 +532,15 @@ function showHint(msg) {
   const h = document.getElementById('hint');
   h.textContent = msg;
   h.style.display = 'block';
+}
+
+let toastTimer = null;
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.style.display = 'block';
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.style.display = 'none'; }, 2400);
 }
 </script>
 </body>
