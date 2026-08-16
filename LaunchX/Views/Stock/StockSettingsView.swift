@@ -78,9 +78,6 @@ struct StockSettingsView: View {
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 100)
                         .onChange(of: settings.alias) { _, _ in settings.save() }
-                    Text("输入别名回车即可打开面板")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
                     Spacer()
                 }
                 .padding(.horizontal, 20)
