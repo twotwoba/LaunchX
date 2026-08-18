@@ -187,6 +187,9 @@ extension ClipboardPanelViewController {
     ///   取 min(估算行数, maxLines)。
     /// 返回值至少为 1。
     func estimatedLineCount(for text: String, maxLines: Int) -> Int {
+        // 行高只取决于前 maxLines 行（估算结果最终截断在 maxLines），
+        // 先取预览再估算，避免对上千行日志做全量拆行
+        let text = ClipboardCellView.previewText(of: text)
         let logicalLines = ClipboardCellView.logicalLineCount(in: text)
         if ClipboardCellView.usesPerLineTruncation(for: text) {
             return min(max(logicalLines, 1), maxLines)

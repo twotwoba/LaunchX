@@ -44,6 +44,12 @@ final class StockChartView: NSView, WKNavigationDelegate, WKScriptMessageHandler
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
+    deinit {
+        print("[StockChartView] dealloc")
+        // 兜底清理（正常路径 tearDown 已移除 handler 破环，deinit 才有机会执行）
+        webView.configuration.userContentController.removeAllScriptMessageHandlers()
+    }
+
     // MARK: - JS 消息回调
 
     func userContentController(
@@ -79,6 +85,20 @@ final class StockChartView: NSView, WKNavigationDelegate, WKScriptMessageHandler
         for js in queued {
             webView.evaluateJavaScript(js, completionHandler: nil)
         }
+    }
+
+    // MARK: - 回收
+
+    /// 窗口关闭时调用。`userContentController.add(self)` 对 handler 是强引用，
+    /// 会形成 webView → configuration → userContentController → self → webView 的
+    /// retain cycle：StockChartView 连同 WKWebView 永不释放，页面常驻
+    /// Web Content 进程累积能耗（复盘多开分时窗口时泄漏会不断叠加）。
+    func tearDown() {
+        let ucc = webView.configuration.userContentController
+        ucc.removeScriptMessageHandler(forName: "chartDoubleClick")
+        ucc.removeScriptMessageHandler(forName: "chartCopy")
+        ucc.removeScriptMessageHandler(forName: "chartClose")
+        webView.stopLoading()
     }
 
     // MARK: - 对外接口（主线程调用）

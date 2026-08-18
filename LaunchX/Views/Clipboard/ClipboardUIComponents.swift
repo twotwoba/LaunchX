@@ -26,15 +26,44 @@ class ClipboardCellView: NSTableCellView {
     static let perLineTruncationThreshold = 2
 
     /// 文本的逻辑行数（按换行分段，忽略首尾空白/换行；空文本算 1 行）。
+    /// 只数换行符、不 split 全文：大文本（如上千行日志）在行高估算里
+    /// 会被反复调用，全量拆行数组会造成明显卡顿。
     static func logicalLineCount(in text: String) -> Int {
         let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else { return 1 }
-        return normalized.components(separatedBy: "\n").count
+        var newlines = 0
+        var searchStart = normalized.startIndex
+        while let range = normalized.range(of: "\n", range: searchStart..<normalized.endIndex) {
+            newlines += 1
+            searchStart = range.upperBound
+        }
+        return newlines + 1
     }
 
     /// 是否采用「每行单行截断」展示（逻辑行数较多时，如日志）。
     static func usesPerLineTruncation(for text: String) -> Bool {
         logicalLineCount(in: text) > perLineTruncationThreshold
+    }
+
+    /// 列表预览文本：只保留前 maxLines 行、每行截到 maxCharsPerLine 字符，超出以「…」结尾。
+    /// 大文本不再整段进入 NSTextField / 行高估算 —— maximumNumberOfLines 只影响绘制，
+    /// 不阻止 Core Text 对全文排版测量，整段数 KB 文本即足以卡住主线程。
+    /// 复制、粘贴仍使用 item.textContent 全文，不受影响。
+    static func previewText(of text: String, maxLines: Int = 6, maxCharsPerLine: Int = 200) -> String {
+        var lines: [String] = []
+        var lineStart = text.startIndex
+        var didTruncate = false
+        while lineStart < text.endIndex && lines.count < maxLines {
+            let lineEnd = text[lineStart...].firstIndex(of: "\n") ?? text.endIndex
+            let limit =
+                text.index(lineStart, offsetBy: maxCharsPerLine, limitedBy: lineEnd) ?? lineEnd
+            if limit < lineEnd { didTruncate = true }  // 行内截断（超长单行）
+            lines.append(String(text[lineStart..<limit]))
+            lineStart = lineEnd < text.endIndex ? text.index(after: lineEnd) : lineEnd
+        }
+        if lineStart < text.endIndex { didTruncate = true }  // 行数超限
+        let preview = lines.joined(separator: "\n")
+        return didTruncate ? preview + "…" : preview
     }
 
     override init(frame frameRect: NSRect) {
@@ -213,12 +242,14 @@ class ClipboardCellView: NSTableCellView {
 
         case .text, .link:
             let text = item.textContent ?? ""
-            contentLabel.stringValue = text
+            // 只把预览（前几行）交给 NSTextField，全文留给复制/粘贴用
+            let preview = Self.previewText(of: text)
+            contentLabel.stringValue = preview
 
             // 单行/少行文本：按词换行（byWordWrapping），尽量展示完整内容；
             // 多行文本（如日志）：每行单行 + 尾部 … 截断（byTruncatingTail），便于扫头部。
             // 注意：换行必须用 byWordWrapping，byTruncatingTail + wraps 会导致不换行。
-            let usesTruncation = Self.usesPerLineTruncation(for: text)
+            let usesTruncation = Self.usesPerLineTruncation(for: preview)
             contentLabel.cell?.wraps = !usesTruncation
             contentLabel.lineBreakMode = usesTruncation ? .byTruncatingTail : .byWordWrapping
             contentLabel.maximumNumberOfLines = Self.maxLines

@@ -142,6 +142,9 @@ final class StockIntradayWindow: NSObject, NSWindowDelegate {
     // MARK: - NSWindowDelegate
 
     func windowWillClose(_ notification: Notification) {
+        // 先破除 chart 的 retain cycle，让 WKWebView 随窗口释放；
+        // 否则每个关闭的分时窗口都会在 Web Content 进程常驻一个页面
+        chart.tearDown()
         onRemove(key)
     }
 }
