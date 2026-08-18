@@ -17,9 +17,11 @@ final class StockIntradayWindow: NSObject, NSWindowDelegate {
     /// 点击标题栏刷新按钮：丢弃缓存重新走兜底链（由数据层回填）
     var onRefresh: (() -> Void)?
 
+    /// - Parameter position: 期望的窗口左下角位置（贴股票面板计算得出）；nil 则屏幕居中
     init(
         key: String, day: String, title: String, columns: [String],
-        context: StockIntradayContext, onRemove: @escaping (String) -> Void
+        context: StockIntradayContext, position: NSPoint?,
+        onRemove: @escaping (String) -> Void
     ) {
         self.key = key
         self.day = day
@@ -78,7 +80,11 @@ final class StockIntradayWindow: NSObject, NSWindowDelegate {
         chart.setStandaloneIntraday()
         chart.showHint("正在查询 \(day) 分时…")
 
-        w.center()
+        if let position {
+            w.setFrameOrigin(position)
+        } else {
+            w.center()
+        }
         w.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         self.window = w
@@ -143,13 +149,14 @@ final class StockIntradayWindow: NSObject, NSWindowDelegate {
 /// 分时窗口集中管理：多开、去重、关闭时回收
 enum StockIntradayWindowManager {
     private static var windows: [String: StockIntradayWindow] = [:]
-    private static var cascadeOrigin: NSPoint?
 
-    /// 打开（或聚焦）某日分时窗口，返回窗口实例供回填数据
+    /// 打开（或聚焦）某日分时窗口，返回窗口实例供回填数据。
+    /// anchor 为股票面板 frame：窗口贴面板摆放（优先右侧、放不下试左侧、再试下方），
+    /// 多开时按当前开窗数级联偏移，全部收进屏幕内（旧实现按上一次窗口位置无限级联，会漂出屏幕）。
     @discardableResult
     static func show(
         day: String, code: String, name: String, columns: [String],
-        context: StockIntradayContext
+        context: StockIntradayContext, anchor: NSRect?
     ) -> StockIntradayWindow {
         let key = "\(code)_\(day)"
         if let existing = windows[key] {
@@ -158,16 +165,52 @@ enum StockIntradayWindowManager {
         }
         let w = StockIntradayWindow(
             key: key, day: day,
-            title: "\(name) \(code) · \(day) 分时", columns: columns, context: context
+            title: "\(name) \(code) · \(day) 分时", columns: columns, context: context,
+            position: adjacentPosition(anchor: anchor, size: NSSize(width: 560, height: 400))
         ) { key in
             windows.removeValue(forKey: key)
         }
-        // 多开时级联排布，避免完全重叠
-        if let origin = cascadeOrigin {
-            w.window?.setFrameOrigin(NSPoint(x: origin.x + 28, y: max(40, origin.y - 28)))
-        }
-        cascadeOrigin = w.window?.frame.origin
         windows[key] = w
         return w
+    }
+
+    /// 计算贴面板的窗口位置：顶边对齐面板，按已开窗口数级联（关窗自动回缩，不会累积漂移）
+    private static func adjacentPosition(anchor: NSRect?, size: NSSize) -> NSPoint? {
+        guard let anchor, anchor.width > 0, anchor.height > 0 else { return nil }
+        guard let screen = NSScreen.screens.first(where: { $0.frame.intersects(anchor) })
+            ?? NSScreen.main
+        else { return nil }
+        let visible = screen.visibleFrame
+        let gap: CGFloat = 12
+        let cascade = CGFloat(windows.count)  // 已开数量 → 偏移份数
+        let size = NSSize(
+            width: min(size.width, visible.width), height: min(size.height, visible.height))
+
+        let clamp = { (v: CGFloat, lo: CGFloat, hi: CGFloat) in min(max(lo, v), max(lo, hi)) }
+
+        // 横向：优先面板右侧；放不下 → 左侧；两侧都放不下 → 面板列内水平居中
+        let rightX = anchor.maxX + gap
+        let leftX = anchor.minX - gap - size.width
+        let x: CGFloat
+        if rightX + size.width <= visible.maxX {
+            x = rightX
+        } else if leftX >= visible.minX {
+            x = leftX
+        } else {
+            x = clamp(anchor.midX - size.width / 2, visible.minX, visible.maxX - size.width)
+        }
+        // 纵向：在面板侧边时顶边对齐；落在面板正上/下方时先试下方、放不下再试上方
+        let beside = x >= anchor.maxX || x + size.width <= anchor.minX
+        let y: CGFloat
+        if beside {
+            y = anchor.maxY - size.height
+        } else {
+            y = anchor.minY - gap - size.height >= visible.minY
+                ? anchor.minY - gap - size.height : anchor.maxY + gap
+        }
+        // 级联偏移后整体 clamp 进屏幕
+        return NSPoint(
+            x: clamp(x + 26 * cascade, visible.minX, visible.maxX - size.width),
+            y: clamp(y - 26 * cascade, visible.minY, visible.maxY - size.height))
     }
 }

@@ -118,7 +118,8 @@ const CHART_STYLES = {
           if (isIntraday) {
             // 分时：只要 开/收/涨跌幅（相对昨收）；时间/高低/量去掉
             let pct = null;
-            if (current && intradayPreClose > 0) {
+            // close=null 是全天槽位的空占位（如停牌段/未收盘时段），显示 -- 而非 NaN%
+            if (current && current.close != null && intradayPreClose > 0) {
               pct = (current.close - intradayPreClose) / intradayPreClose * 100;
             }
             return [
@@ -186,8 +187,9 @@ const CHART_STYLES = {
   }
 };
 
-// 分时 x 轴刻度：库默认按「偶数根 bar」取刻度，1 分钟数据会落在 09:44 / 13:19
-// 这种非整点时刻。这里覆盖为整点/半点 + 首尾刻度；非分时模式原样返回默认刻度。
+// 分时 x 轴：固定 A 股全天时间域 09:30–15:00，按 1 分钟槽位铺满 242 格
+// （09:30–11:30 → 0–120，13:00–15:00 → 121–241），有多少数据画多少：
+// 数据被垫到真实时间槽位上（见 showIntraday），半天数据只占左半边，不会被拉伸成全天。
 const INTRA_HM = new Intl.DateTimeFormat('zh-CN', {
   hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Shanghai' });
 const INTRA_MINUTE_CACHE = new Map();
@@ -205,37 +207,54 @@ function intraMinuteOfDay(ts) {
   return m;
 }
 
+const INTRA_TOTAL_SLOTS = 242;  // 09:30–11:30 含首尾 121 分钟 + 13:00–15:00 含首尾 121 分钟
+// 时间戳 → 槽位；不在连续竞价时段（集合竞价 09:25、盘后固定价格 15:06+ 等）返回 -1
+function intraSlotOf(ts) {
+  const m = intraMinuteOfDay(ts);
+  if (m >= 570 && m <= 690) return m - 570;        // 09:30–11:30 → 0–120
+  if (m >= 780 && m <= 900) return m - 780 + 121;  // 13:00–15:00 → 121–241
+  return -1;
+}
+
+// 把分时点垫到全天槽位：真实点落位，空槽用 close=null 占位
+// （库的面积线/量柱/轴范围计算都会跳过非法值 → 线停在最后一个真实点，不穿空槽）。
+// 占位 timestamp 按槽位真实分钟推出（跨午休也单调递增），供十字线取时间用。
+function intraPadToSlots(arr) {
+  const slots = new Array(INTRA_TOTAL_SLOTS).fill(null);
+  for (const b of arr) {
+    const s = intraSlotOf(b.timestamp);
+    if (s >= 0) slots[s] = b;
+  }
+  const firstIdx = slots.findIndex((b) => b !== null);
+  if (firstIdx < 0) return arr;  // 防御：全部点都在域外，退回原始数据
+  const day0 = slots[firstIdx].timestamp - intraMinuteOfDay(slots[firstIdx].timestamp) * 60000;
+  return slots.map((b, i) => {
+    if (b) return b;
+    const minute = i <= 120 ? 570 + i : 780 + (i - 121);  // 槽位反推真实分钟
+    return {
+      timestamp: day0 + minute * 60000,
+      open: null, high: null, low: null, close: null, volume: null, turnover: null,
+    };
+  });
+}
+
+// 固定刻度：全天时间域恒定，不随数据多少变化；convertToPixel 对槽位线性外推，
+// 数据不满一天时刻度位置也正确
+const INTRA_FIXED_TICKS = [
+  { slot: 0, text: '09:30' },
+  { slot: 60, text: '10:30' },
+  { slot: 120, text: '11:30/13:00' },
+  { slot: 181, text: '14:00' },
+  { slot: 241, text: '15:00' },
+];
 function intraCreateTicks({ defaultTicks, bounding }) {
   if (!isIntraday || !barCache.length) return defaultTicks;
-  const n = barCache.length;
-  // 半点候选过密时退化为整点；minPx 为「HH:mm」文本 + 间隙的最小像素间距
-  const minPx = 58;
-  const maxTicks = Math.max(3, Math.floor(bounding.width / minPx));
-  const minGapBars = Math.max(2, Math.ceil((n * minPx) / bounding.width));
-  const half = n <= maxTicks * 30; // 粗判：候选半点数是否放得下
-  const cands = [0];
-  for (let i = 0; i < n; i++) {
-    const m = intraMinuteOfDay(barCache[i].timestamp);
-    if (m % (half ? 30 : 60) === 0 && i !== 0) cands.push(i);
-  }
-  cands.push(n - 1);
-  cands.sort((a, b) => a - b);
-  // 贪心去重：相邻候选不足 minGapBars 时取前者（首尾除外，尾刻度保留）
-  const picked = [];
-  for (const i of cands) {
-    if (!picked.length || i - picked[picked.length - 1] >= minGapBars) picked.push(i);
-  }
-  if (picked[picked.length - 1] !== n - 1 && n - 1 - picked[picked.length - 1] < minGapBars / 2) {
-    picked[picked.length - 1] = n - 1;  // 尾刻度离前一刻度过近时顶替，保证 15:00 可见
-  } else if (picked[picked.length - 1] !== n - 1) {
-    picked.push(n - 1);
-  }
-  return picked.map((i) => {
-    let coord = this.convertToPixel(i);
+  return INTRA_FIXED_TICKS.map(({ slot, text }) => {
+    let coord = this.convertToPixel(slot);
     // 首尾刻度文字以坐标居中绘制，贴边会裁半 → 内收半个文字宽（"HH:mm" 约 36px）
-    if (i === 0) coord = Math.max(coord, 19);
-    if (i === n - 1) coord = Math.min(coord, bounding.width - 19);
-    return { coord, value: barCache[i].timestamp, text: INTRA_HM.format(barCache[i].timestamp) };
+    if (slot === 0) coord = Math.max(coord, 19);
+    if (slot === INTRA_TOTAL_SLOTS - 1) coord = Math.min(coord, bounding.width - 19);
+    return { coord, value: barCache[slot].timestamp, text };
   });
 }
 
@@ -321,12 +340,22 @@ try {
     series: 'price',
     calc: (dataList) => {
       const b = intradayPreClose > 0 ? intradayPreClose : null;
-      let sumVol = 0, sumAmt = 0;
-      return dataList.map((d) => {
-        sumVol += d.volume || 0;
-        sumAmt += d.turnover || 0;
+      // 库的指标线不跨 null 连线：粗粒度数据每两根真点之间隔 4 个空槽，若空槽给
+      // null 均价线会整条消失 → 盘中空洞用前值填充保持连续；
+      // 最后一根真实点之后的空槽仍给 null，让线停在数据末端（未收盘留白）。
+      let lastReal = -1;
+      for (let i = dataList.length - 1; i >= 0; i--) {
+        if (dataList[i].close != null) { lastReal = i; break; }
+      }
+      let sumVol = 0, sumAmt = 0, avp = null;
+      return dataList.map((d, i) => {
+        if (d.close != null) {
+          sumVol += d.volume || 0;
+          sumAmt += d.turnover || 0;
+          if (sumVol > 0) avp = sumAmt / (sumVol * 100);
+        }
         return {
-          avp: sumVol > 0 ? sumAmt / (sumVol * 100) : null,
+          avp: i > lastReal ? null : avp,
           base: b,
         };
       });
@@ -351,7 +380,8 @@ try {
     minValue: 0,
     calc: (dataList) => dataList.map((d, i) => ({
       volume: d.volume ?? 0,
-      up: i === 0 ? true : d.close >= dataList[i - 1].close,
+      // close=null 为槽位空占位（量恒 0 不显示）；比较前判空，避免首个真实点被误判为绿
+      up: i === 0 || dataList[i - 1].close == null ? true : d.close >= dataList[i - 1].close,
     })),
     figures: [{
       key: 'volume', title: 'VOLUME: ', type: 'bar', baseValue: 0,
@@ -421,7 +451,8 @@ function showIntraday(json, day, preClose) {
   // 昨收只作轴/基准线参考值，不注入假数据点（注入会平移整条分时线，与实际对不上）
   const base = Number(preClose) || 0;
   intradayPreClose = base;
-  barCache = arr;
+  // 垫到全天 242 槽位：部分数据按真实时间占位（半天只画左半边），轴恒为 09:30–15:00
+  barCache = intraPadToSlots(arr);
   try { chart.removeIndicator({ name: 'MA' }); } catch (e) {}
   try { chart.removeIndicator({ name: 'MACD' }); } catch (e) {}
   // VOL 的量柱按分钟内开收配色，与恒红的分时线不搭 → 换成跟价走的 MINVOL
@@ -509,8 +540,12 @@ function fitIntradayWidth() {
     chart.setScrollEnabled(false);
     const n = chart.getDataList().length;
     if (n > 0) {
-      const w = document.getElementById('chart').clientWidth || 500;
-      chart.setBarSpace(Math.min(50, Math.max(1, Math.floor(w / n))));
+      // 宽度取主画布 CSS 宽：容器 clientWidth 含右侧价格轴列，直接用会让全天槽位
+      // 溢出绘图区、左边被裁（09:30 起的一段画不进来）
+      const cv = document.querySelector('#chart canvas');
+      const w = (cv && cv.clientWidth) || document.getElementById('chart').clientWidth || 500;
+      // 不取整：分时数据已垫满全天槽位，barSpace 取实数才能精确铺到右缘（15:00）
+      chart.setBarSpace(Math.min(50, Math.max(1, w / n)));
       chart.setOffsetRightDistance(0);
     }
   } catch (e) { /* 某些版本无此 API 则维持默认 */ }

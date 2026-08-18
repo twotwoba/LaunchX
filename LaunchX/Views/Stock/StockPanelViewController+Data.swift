@@ -118,7 +118,8 @@ extension StockPanelViewController: NSTextViewDelegate {
 
         let intradayWindow = StockIntradayWindowManager.show(
             day: day, code: bundle.code, name: bundle.name,
-            columns: settings.exportColumns, context: intradayContext(bundle: bundle, day: day))
+            columns: settings.exportColumns, context: intradayContext(bundle: bundle, day: day),
+            anchor: view.window?.frame)
         let secid = bundle.secid
         // 标题栏刷新按钮：丢弃缓存重走兜底链，重试 zzshare 1 分钟源
         intradayWindow.onRefresh = { [weak self, weak intradayWindow] in
