@@ -60,6 +60,7 @@ extension StockPanelViewController {
             }
             await MainActor.run {
                 self.isAnalyzing = false
+                self.scheduleAIRender(flush: true)  // 流结束：立即渲染最终版（含漏网 chunk）
                 self.setLoading(false)
                 self.analyzeButton?.isEnabled = true
                 self.agentEventLabel?.stringValue = ""
@@ -75,26 +76,67 @@ extension StockPanelViewController {
         case error
     }
 
+    /// 流式 chunk 先落分段缓冲（相邻同风格合并），节流后整体重渲：
+    /// 正文段是 Markdown（半截标记会随后续 chunk 自愈），reasoning/错误段保持纯文本
     func appendAI(_ chunk: String, error: Bool = false, style: AIOutputStyle? = nil) {
         let resolved: AIOutputStyle = style ?? (error ? .error : .normal)
         DispatchQueue.main.async { [weak self] in
-            guard let self = self, let tv = self.aiTextView else { return }
-            let attrs: [NSAttributedString.Key: Any]
-            switch resolved {
-            case .error:
-                attrs = [.foregroundColor: NSColor.systemRed, .font: NSFont.systemFont(ofSize: 13)]
+            guard let self = self, self.aiTextView != nil, !chunk.isEmpty else { return }
+            if !self.aiSegments.isEmpty && self.aiSegments[self.aiSegments.count - 1].style == resolved {
+                self.aiSegments[self.aiSegments.count - 1].text += chunk
+            } else {
+                self.aiSegments.append((resolved, chunk))
+            }
+            self.scheduleAIRender(flush: false)
+        }
+    }
+
+    /// 120ms 内的多个 chunk 合并为一次全文重渲（全文重排避免半行标记闪烁跳动）；
+    /// flush 立即渲染（流结束/清空时）
+    func scheduleAIRender(flush: Bool) {
+        aiRenderTick?.cancel()
+        aiRenderTick = nil
+        if flush {
+            renderAI()
+            return
+        }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            self.aiRenderTick = nil
+            self.renderAI()
+        }
+        aiRenderTick = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: work)
+    }
+
+    /// 全量重渲 AI 区：钉底跟随（用户上翻阅读时不打扰）
+    private func renderAI() {
+        guard let tv = aiTextView else { return }
+        let pinned = tv.visibleRect.maxY >= tv.bounds.height - 40
+        let out = NSMutableAttributedString()
+        for seg in aiSegments {
+            if out.length > 0 { out.append(NSAttributedString(string: "\n")) }
+            switch seg.style {
             case .reasoning:
-                attrs = [
+                let ps = NSMutableParagraphStyle()
+                ps.paragraphSpacingBefore = 4
+                out.append(NSAttributedString(string: seg.text, attributes: [
                     .foregroundColor: NSColor.tertiaryLabelColor,
                     .font: NSFont.systemFont(ofSize: 11),
-                ]
+                    .paragraphStyle: ps,
+                ]))
+            case .error:
+                out.append(NSAttributedString(string: seg.text, attributes: [
+                    .foregroundColor: NSColor.systemRed,
+                    .font: NSFont.systemFont(ofSize: 13),
+                ]))
             case .normal:
-                attrs = [.foregroundColor: NSColor.labelColor, .font: NSFont.systemFont(ofSize: 13)]
+                out.append(MiniMarkdown.render(seg.text))
             }
-            let attr = NSAttributedString(string: chunk, attributes: attrs)
-            tv.textStorage?.append(attr)
-            tv.scrollToEndOfDocument(nil)
         }
+        tv.textStorage?.replaceCharacters(
+            in: NSRange(location: 0, length: tv.textStorage?.length ?? 0), with: out)
+        if pinned { tv.scrollToEndOfDocument(nil) }
     }
 
     func handleAgentEvent(_ ev: StockAgentEvent) {

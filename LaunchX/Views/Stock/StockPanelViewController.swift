@@ -46,6 +46,10 @@ class StockPanelViewController: NSViewController {
     var isAnalyzing = false
     /// 最近一次分析是否失败（失败时按钮允许直接重试，而不是仅滚动定位）
     var lastAnalysisFailed = false
+    /// AI 输出分段缓冲（流式到达，相邻同风格段合并；正文段渲染时走 Markdown）
+    var aiSegments: [(style: AIOutputStyle, text: String)] = []
+    /// 流式渲染节流任务（120ms 内多个 chunk 合并为一次全文重渲）
+    var aiRenderTick: DispatchWorkItem?
     /// 当前查询/分析任务（用于取消）
     var queryTask: Task<Void, Never>?
     var analyzeTask: Task<Void, Never>?
