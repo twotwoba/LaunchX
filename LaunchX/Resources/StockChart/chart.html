@@ -15,14 +15,24 @@
     font: -apple-system 12px; color: rgba(255,255,255,0.45); pointer-events: none;
   }
   /* 顶部行情行（DOM 版图例）：canvas 图例画不了底色，改 DOM 以支持涨跌幅红绿底白字徽标。
-     字号/字体与库图例对齐（12px Helvetica Neue，-apple-system 同字号显大显粗）；
-     top 26px = 避让主图指标图例（MA/INTRA 占 4~24px：margin 4 + 12px 文字 + margin 4） */
+     字号/字体与库图例对齐（12px Helvetica Neue，-apple-system 同字号显大显粗）。
+     日K：行情行在最上（4px），MA 数值行（#maBar）在其下方 24px；
+     分时：顶部 4~24px 是均价图例（canvas），行情行下移避让（intraday-shift） */
   #quoteBar {
-    position: absolute; top: 26px; left: 8px; z-index: 10;
+    position: absolute; top: 4px; left: 8px; z-index: 10;
     display: none; align-items: center; gap: 8px;
     font: 12px 'Helvetica Neue', -apple-system, sans-serif;
     white-space: nowrap; pointer-events: none;
   }
+  #quoteBar.intraday-shift { top: 26px; }
+  /* MA 数值行：与行情行同字体，位于其下；标签与数值同色（随各自均线色） */
+  #maBar {
+    position: absolute; top: 24px; left: 8px; z-index: 10;
+    display: none; align-items: center; gap: 10px;
+    font: 12px 'Helvetica Neue', -apple-system, sans-serif;
+    white-space: nowrap; pointer-events: none;
+  }
+  #maBar .mitem { display: inline-flex; align-items: center; gap: 3px; }
   #quoteBar .qitem { display: inline-flex; align-items: center; gap: 3px; }
   #quoteBar .ql, #quoteBar .qdate { color: rgba(255,255,255,0.6); }
   #quoteBar .qv { color: rgba(255,255,255,0.9); }
@@ -68,6 +78,7 @@
 <body>
 <div id="chart"></div>
 <div id="quoteBar"></div>
+<div id="maBar"></div>
 <div id="intradayBar">
   <span class="title" id="intradayTitle"></span>
   <span class="actions">
@@ -103,6 +114,18 @@ let dayBars = [];  // 最近一次日K，分时切换时恢复
 let isIntraday = false;
 // 独立分时窗口模式：隐藏的 html 直接以分时态展示，「返回日K」变「关闭」
 let standaloneIntraday = false;
+
+// MA/MACD 线色（用户定制）。注意：全局 indicator.lines 按 figure 序取色，MA(4线) 与
+// MACD(2线) 共用会互相牵制（MACD 的线会取到 MA5/MA10 的色）→ 走 createIndicator
+// 实例级 styles.lines 整组覆盖，两指标互不干扰；图例文字色自动跟随线色。
+// 默认色板为 橙#FF9600/紫#935EBD/蓝#1677FF/玫红#E11D74，以下为重排结果。
+const MA_PARAMS = [5, 10, 30, 60];
+const MA_COLORS = ['#FFFFFF', '#E11D74', '#FF9600', '#1677FF'];  // MA5/10/30/60
+const MA_LINE_STYLES = { lines: MA_COLORS.map((c) => ({ color: c })) };
+const MACD_LINE_STYLES = { lines: [
+  { color: '#FFFFFF' },   // 原橙黄线 → 白
+  { color: '#1677FF' },   // 原紫线 → 蓝
+] };
 
 // A 股惯例：红涨绿跌；蜡烛实心；副图（VOL/MACD）柱色与主图一致
 const CHART_STYLES = {
@@ -238,6 +261,7 @@ function intraCreateTicks({ defaultTicks, bounding }) {
 // 规则：涨跌幅为红涨/绿跌底 + 白字徽标，其余（收盘价/换手率/量比/成交量）白字。
 // 十字线悬停跟随悬停根，移出图表回落到最后一根。
 const quoteBarEl = document.getElementById('quoteBar');
+const maBarEl = document.getElementById('maBar');
 let quoteRenderKey = '';  // 短路重复渲染（crosshair 每像素都触发）
 
 const qFmt2 = (v) => (v == null || isNaN(v)) ? '--' : v.toFixed(2);
@@ -268,11 +292,11 @@ function lastQuoteIndex() {
 }
 
 function renderQuoteBar(dataIndex) {
-  if (!chart || !barCache.length) { quoteBarEl.style.display = 'none'; return; }
+  if (!chart || !barCache.length) { quoteBarEl.style.display = 'none'; maBarEl.style.display = 'none'; return; }
   const i = (dataIndex == null || dataIndex < 0 || dataIndex >= barCache.length)
     ? lastQuoteIndex() : dataIndex;
   const b = barCache[i];
-  if (!b) { quoteBarEl.style.display = 'none'; return; }
+  if (!b) { quoteBarEl.style.display = 'none'; maBarEl.style.display = 'none'; return; }
   // key 含模式/时间戳/索引：同根不重建 DOM；数据入口换 barCache 时会置空 key 强制重画
   const key = (isIntraday ? 'i' : 'd') + b.timestamp + ':' + i + ':' + intradayPreClose;
   if (key !== quoteRenderKey) {
@@ -301,10 +325,27 @@ function renderQuoteBar(dataIndex) {
       if (b.turnoverRate > 0) parts.push(qItem('换手率', b.turnoverRate.toFixed(2) + '%'));
       if (b.volumeRatio > 0) parts.push(qItem('量比', b.volumeRatio.toFixed(2)));
       parts.push(qItem('成交量', qFmtVol(b.volume)));
+      // MA 数值行：与库内 MA 同算法（收盘价滑动平均），跟随十字线切换
+      const maParts = [];
+      MA_PARAMS.forEach((p, j) => {
+        let v = null;
+        if (i >= p - 1) {
+          let s = 0, ok = true;
+          for (let k = i - p + 1; k <= i; k++) {
+            const c = barCache[k].close;
+            if (c == null) { ok = false; break; }
+            s += c;
+          }
+          if (ok) v = s / p;
+        }
+        maParts.push('<span class="mitem" style="color:' + MA_COLORS[j] + '">MA' + p + ':' + (v == null ? '--' : v.toFixed(2)) + '</span>');
+      });
+      maBarEl.innerHTML = maParts.join('');
     }
     quoteBarEl.innerHTML = parts.join('');
   }
   quoteBarEl.style.display = 'flex';
+  maBarEl.style.display = isIntraday ? 'none' : 'flex';
 }
 
 function initChart() {
@@ -321,9 +362,9 @@ function initChart() {
   // 不指定 paneId 时作用于全部窗格的 Y 轴。时间轴（X 轴）缩放保留。
   try { chart.overrideYAxis({ scrollZoomEnabled: false }); } catch (e) {}
   // 主图叠加 MA5/10/30/60（不建独立窗格）；副图：VOL、MACD（固定 paneId 便于调高度）
-  chart.createIndicator({ name: 'MA', calcParams: [5, 10, 30, 60], paneId: 'candle_pane' });
+  chart.createIndicator({ name: 'MA', calcParams: MA_PARAMS, paneId: 'candle_pane', styles: MA_LINE_STYLES });
   chart.createIndicator({ name: 'VOLW', paneId: 'pane_vol' });
-  chart.createIndicator({ name: 'MACD', paneId: 'pane_macd' });
+  chart.createIndicator({ name: 'MACD', paneId: 'pane_macd', styles: MACD_LINE_STYLES });
   applyPaneHeights();
   // v10 数据加载契约：经 setDataLoader 提供数据（无 applyNewData）；
   // setSymbol/setPeriod 触发 resetData → getBars('init')。历史/未来无增量，callback 第二参 false 关闭加载更多。
@@ -395,6 +436,39 @@ function applyPaneHeights() {
     chart.setPaneOptions({ id: 'pane_macd', height: Math.max(48, Math.round(h * 0.15)), minHeight: 40 });
   } catch (e) { /* 旧版本无此 API 时保持默认等分 */ }
 }
+
+// 覆盖内置 MA：复刻其滑动均线算法，但 createTooltipDataSource 返回空图例
+// （v10 无按指标隐藏 tooltip 图例的开关，只能整体覆盖注册）。
+// MA 数值行改由 DOM 的 #maBar 渲染，与顶部行情行（#quoteBar）排在一起：
+// 行情行在最上（4px）、MA 行在下方（24px），对调内置 MA 图例压在行情行上的旧布局。
+try {
+  klinecharts.registerIndicator({
+    name: 'MA',
+    shortName: 'MA',
+    calcParams: MA_PARAMS,
+    figures: MA_PARAMS.map((p) => ({ key: 'ma' + p, title: 'MA' + p + ': ', type: 'line' })),
+    calc: (dataList, { calcParams, figures }) => {
+      // 前缀和滚动均值：O(N×参数个数)，无需逐根回看
+      const sums = calcParams.map(() => 0);
+      return dataList.map((d, i) => {
+        const item = {};
+        figures.forEach((f, j) => {
+          const p = calcParams[j];
+          sums[j] += d.close;
+          if (i >= p - 1) {
+            item[f.key] = sums[j] / p;
+            sums[j] -= dataList[i - p + 1].close;
+          } else {
+            item[f.key] = null;  // 不足周期不画（与内置一致，null 断线）
+          }
+        });
+        return item;
+      });
+    },
+    // 空 legends/features + 空标题 → canvas 不画 MA 图例行（改 DOM）
+    createTooltipDataSource: () => ({ name: '', calcParamsText: '', legends: [], features: [] }),
+  });
+} catch (e) { /* 已注册或旧版本 */ }
 
 // 自定义指标：分时叠加线（主图）。两条 figure 合在一个指标里——
 // v10 同一 pane 上 createIndicator 是替换语义，分拆两个指标会互相顶掉（均价线消失的回归根因）
@@ -515,6 +589,8 @@ function showIntraday(json, day, preClose) {
   intradayDay = day || '';
   document.getElementById('intradayTitle').textContent = intradayDay + ' 分时';
   document.getElementById('intradayBar').style.display = standaloneIntraday ? 'none' : 'flex';
+  // 分时顶部 4~24px 是均价（INTRA）canvas 图例区，行情行下移避让（MA 行由 renderQuoteBar 隐藏）
+  quoteBarEl.classList.add('intraday-shift');
   const arr = JSON.parse(json);
   // 昨收只作轴/基准线参考值，不注入假数据点（注入会平移整条分时线，与实际对不上）
   const base = Number(preClose) || 0;
@@ -580,14 +656,15 @@ function showDaily() {
   if (!chart || (!dayBars.length && !barCache.length)) return;
   isIntraday = false;
   document.getElementById('intradayBar').style.display = 'none';
+  quoteBarEl.classList.remove('intraday-shift');
   try { chart.removeIndicator({ name: 'INTRA' }); } catch (e) {}
   try { chart.removeIndicator({ name: 'MINVOL', paneId: 'pane_vol' }); } catch (e) {}
   try { chart.createIndicator({ name: 'VOLW', paneId: 'pane_vol' }); } catch (e) {}
   chart.setStyles({ candle: { type: 'candle_solid' } });
   try { chart.overrideYAxis({ paneId: 'candle_pane', name: 'normal' }); } catch (e) {}
   try {
-    chart.createIndicator({ name: 'MA', calcParams: [5, 10, 30, 60], paneId: 'candle_pane' });
-    chart.createIndicator({ name: 'MACD', paneId: 'pane_macd' });
+    chart.createIndicator({ name: 'MA', calcParams: MA_PARAMS, paneId: 'candle_pane', styles: MA_LINE_STYLES });
+    chart.createIndicator({ name: 'MACD', paneId: 'pane_macd', styles: MACD_LINE_STYLES });
   } catch (e) {}
   applyPaneHeights();
   if (dayBars.length) barCache = dayBars;
@@ -626,6 +703,7 @@ function fitIntradayWidth() {
 function showError(msg) {
   document.getElementById('hint').style.display = 'none';
   quoteBarEl.style.display = 'none';
+  maBarEl.style.display = 'none';
   quoteRenderKey = '';
   const e = document.getElementById('error');
   e.textContent = msg;
