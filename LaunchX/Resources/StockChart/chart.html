@@ -120,6 +120,8 @@ let standaloneIntraday = false;
 // 实例级 styles.lines 整组覆盖，两指标互不干扰；图例文字色自动跟随线色。
 // 默认色板为 橙#FF9600/紫#935EBD/蓝#1677FF/玫红#E11D74，以下为重排结果。
 const MA_PARAMS = [5, 10, 30, 60];
+// 分时左侧预留空隙（逻辑像素，约 2~3mm）：09:30 首槽贴着左缘不好查看/悬停
+const INTRA_LEFT_GAP = 10;
 const MA_COLORS = ['#FFFFFF', '#E11D74', '#FF9600', '#1677FF'];  // MA5/10/30/60
 const MA_LINE_STYLES = { lines: MA_COLORS.map((c) => ({ color: c })) };
 const MACD_LINE_STYLES = { lines: [
@@ -378,7 +380,7 @@ function initChart() {
     if (!chart) return;
     chart.resize();
     applyPaneHeights();
-    if (standaloneIntraday) fitIntradayWidth();  // 分时窗口拖宽后重新撑满
+    if (standaloneIntraday || isIntraday) fitIntradayWidth();  // 分时视图拖宽后重新撑满
   }).observe(container);
 
   // 顶部行情行跟随十字线。v10.0.2 的 onCrosshairChange 载荷只有 {x, y, paneId}
@@ -645,10 +647,9 @@ function showIntraday(json, day, preClose) {
   chart.setPeriod({ type: 'minute' });
   quoteRenderKey = '';  // 换数据源强制重画（同末根时间戳的刷新也生效）
   renderQuoteBar(null);
-  if (standaloneIntraday) {
-    // 等数据经 loader 落位后再按宽度平摊（双 rAF 保证首帧布局完成）
-    requestAnimationFrame(() => requestAnimationFrame(() => fitIntradayWidth()));
-  }
+  // 等数据经 loader 落位后再按宽度平摊（双 rAF 保证首帧布局完成）；
+  // 主面板与独立分时窗口统一走 fit：禁缩放/平移 + 左侧留隙，不再依赖内部自适应
+  requestAnimationFrame(() => requestAnimationFrame(() => fitIntradayWidth()));
 }
 
 // 切回日K：恢复蜡烛样式与 MA/MACD
@@ -660,6 +661,13 @@ function showDaily() {
   try { chart.removeIndicator({ name: 'INTRA' }); } catch (e) {}
   try { chart.removeIndicator({ name: 'MINVOL', paneId: 'pane_vol' }); } catch (e) {}
   try { chart.createIndicator({ name: 'VOLW', paneId: 'pane_vol' }); } catch (e) {}
+  // 分时 fit 动过布局与交互（barSpace 摊薄/禁缩放平移），恢复库默认（barSpace 10 / 右距 80）
+  try {
+    chart.setZoomEnabled(true);
+    chart.setScrollEnabled(true);
+    chart.setBarSpace(10);
+    chart.setOffsetRightDistance(80);
+  } catch (e) { /* 旧版本无此 API 则维持现状 */ }
   chart.setStyles({ candle: { type: 'candle_solid' } });
   try { chart.overrideYAxis({ paneId: 'candle_pane', name: 'normal' }); } catch (e) {}
   try {
@@ -693,8 +701,9 @@ function fitIntradayWidth() {
       // 溢出绘图区、左边被裁（09:30 起的一段画不进来）
       const cv = document.querySelector('#chart canvas');
       const w = (cv && cv.clientWidth) || document.getElementById('chart').clientWidth || 500;
-      // 不取整：分时数据已垫满全天槽位，barSpace 取实数才能精确铺到右缘（15:00）
-      chart.setBarSpace(Math.min(50, Math.max(1, w / n)));
+      // 不取整：分时数据已垫满全天槽位，barSpace 取实数才能精确铺到右缘（15:00）；
+      // 可用宽减去左侧预留隙，配合右贴边 → 首槽(09:30)离左缘 INTRA_LEFT_GAP，便于查看与悬停
+      chart.setBarSpace(Math.min(50, Math.max(1, (w - INTRA_LEFT_GAP) / n)));
       chart.setOffsetRightDistance(0);
     }
   } catch (e) { /* 某些版本无此 API 则维持默认 */ }

@@ -94,14 +94,16 @@ final class StockIntradayWindow: NSObject, NSWindowDelegate {
         window?.makeKeyAndOrderFront(nil)
     }
 
-    /// 数据到达：渲染分时图（昨收已知时启用百分比轴 + 零轴基准线）
+    /// 数据到达：渲染分时图（昨收已知时启用百分比轴 + 零轴基准线）。
+    /// 分时源为不复权价，先对齐到日K的前复权口径，收盘/涨跌幅才与日K一致
     func render(points: [StockTrendPoint]) {
-        self.points = points
-        chart.updateIntraday(points: points, day: day, preClose: context.preClose ?? 0)
+        let aligned = context.alignedPoints(points)
+        self.points = aligned
+        chart.updateIntraday(points: aligned, day: day, preClose: context.preClose ?? 0)
         refreshButton?.isEnabled = true
         // 1 分钟源（腾讯 minute / 新浪 scale=1 / zzshare）首点都会落在 09:30
         // （后两者会补集合竞价点）；不是 09:30 起步 = 兜底链滑到了粗粒度分钟K
-        let firstMinute = points.first.map { String($0.time.dropFirst(11).prefix(5)) } ?? ""
+        let firstMinute = aligned.first.map { String($0.time.dropFirst(11).prefix(5)) } ?? ""
         refreshButton?.isHidden = (firstMinute == "09:30")
     }
 

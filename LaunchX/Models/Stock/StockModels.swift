@@ -192,4 +192,29 @@ struct StockIntradayContext {
     var avg5Volume: Double?  // 前 5 日日均量(手)（量比）
     var circShares: Double?  // 流通股本(股)（换手率）
     var turnoverRate: Double?  // 当日换手率(%)（日K自带，优先于股本反推）
+    var close: Double?  // 当日日K收盘（前复权，分时口径对齐锚点）
+
+    /// 把分时点对齐到日K的前复权口径。
+    /// 分时源（腾讯minute/新浪/zzshare）是不复权价，日K是前复权价：股票在「该日之后、
+    /// 今天之前」发生过除权除息时两套价格整体错位，分时的收盘/涨跌幅就会和日K对不上
+    /// （例：002941 2026-07-09 除息后，3 月的分时比日K整体高约 1.2%）。
+    /// 以「当日日K收盘 / 分时末点价」为因子线性缩放各价格字段（量、额不参与复权），
+    /// 缩放后分时收盘与涨跌幅和日K完全一致。锚点缺失或因子异常时保持原样。
+    func alignedPoints(_ points: [StockTrendPoint]) -> [StockTrendPoint] {
+        guard let anchor = close, anchor > 0,
+            let last = points.last?.price, last > 0
+        else { return points }
+        let scale = anchor / last
+        // 正常复权因子只是略偏离 1（分红/送转）；数量级异常说明数据对不上，宁可不缩放
+        guard scale.isFinite, (0.2...5).contains(scale) else { return points }
+        if abs(scale - 1) < 1e-9 { return points }
+        return points.map { p in
+            StockTrendPoint(
+                time: p.time,
+                open: p.open * scale, high: p.high * scale,
+                low: p.low * scale, price: p.price * scale,
+                avgPrice: p.avgPrice * scale,
+                volume: p.volume, amount: p.amount)
+        }
+    }
 }

@@ -163,7 +163,8 @@ extension StockPanelViewController: NSTextViewDelegate {
             ? bundle.snapshot?.circShares
             : bundle.fundamentals?.circShares
         guard let idx = bars.firstIndex(where: { $0.date == day }) else {
-            // 当日还没进日K（盘中查今天）：最后一根即昨日，量比窗口为含昨日的最后 5 根
+            // 当日还没进日K（盘中查今天）：最后一根即昨日，量比窗口为含昨日的最后 5 根；
+            // 今日前复权与不复权同价，无需对齐锚点
             return StockIntradayContext(
                 preClose: bars.last?.close,
                 avg5Volume: avgVolume(bars, before: bars.count),
@@ -174,7 +175,8 @@ extension StockPanelViewController: NSTextViewDelegate {
             preClose: idx > 0 ? bars[idx - 1].close : nil,
             avg5Volume: avgVolume(bars, before: idx),
             circShares: shares,
-            turnoverRate: bars[idx].turnover > 0 ? bars[idx].turnover : nil)
+            turnoverRate: bars[idx].turnover > 0 ? bars[idx].turnover : nil,
+            close: bars[idx].close)
     }
 
     /// endIdx 之前（不含）最多 5 根的日均量(手)
