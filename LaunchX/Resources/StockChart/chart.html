@@ -14,6 +14,25 @@
     position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
     font: -apple-system 12px; color: rgba(255,255,255,0.45); pointer-events: none;
   }
+  /* 顶部行情行（DOM 版图例）：canvas 图例画不了底色，改 DOM 以支持涨跌幅红绿底白字徽标。
+     字号/字体与库图例对齐（12px Helvetica Neue，-apple-system 同字号显大显粗）；
+     top 26px = 避让主图指标图例（MA/INTRA 占 4~24px：margin 4 + 12px 文字 + margin 4） */
+  #quoteBar {
+    position: absolute; top: 26px; left: 8px; z-index: 10;
+    display: none; align-items: center; gap: 8px;
+    font: 12px 'Helvetica Neue', -apple-system, sans-serif;
+    white-space: nowrap; pointer-events: none;
+  }
+  #quoteBar .qitem { display: inline-flex; align-items: center; gap: 3px; }
+  #quoteBar .ql, #quoteBar .qdate { color: rgba(255,255,255,0.6); }
+  #quoteBar .qv { color: rgba(255,255,255,0.9); }
+  #quoteBar .qbadge {
+    padding: 0 4px; border-radius: 3px; font-weight: 500;
+    color: #fff; line-height: 15px;
+  }
+  #quoteBar .qbadge.up { background: #f6465d; }
+  #quoteBar .qbadge.down { background: #2ebd85; }
+  #quoteBar .qbadge.flat { background: #76808F; }
   #error {
     position: absolute; inset: 0; display: none; z-index: 20;
     align-items: center; justify-content: center; padding: 16px;
@@ -48,6 +67,7 @@
 </head>
 <body>
 <div id="chart"></div>
+<div id="quoteBar"></div>
 <div id="intradayBar">
   <span class="title" id="intradayTitle"></span>
   <span class="actions">
@@ -104,57 +124,12 @@ const CHART_STYLES = {
       last: { color: 'rgba(255,255,255,0.85)' }
     },
     // 去掉默认的 "{ticker} · {period}" 标题（v10 路径在 candle.tooltip 下）；
-    // 顶部悬浮数据行：默认项 + 换手率/量比（Swift 逐 bar 注入，缺失自动隐藏；分时 bar 无此字段不受影响）
+    // 顶部悬浮数据行也在此处一并关掉，改由 DOM 的 #quoteBar 渲染（换手率/量比缺失自动隐藏）
     tooltip: {
       title: { show: false },
-      legend: {
-        template: ({ prev, current }) => {
-          const fmt2 = (v) => (v == null || isNaN(v)) ? '--' : v.toFixed(2);
-          // 成交量（手）→ 中文习惯单位：万手 / 亿手
-          const fmtVol = (v) => (v == null || isNaN(v) || v <= 0) ? '--'
-            : v >= 1e8 ? (v / 1e8).toFixed(2) + '亿手'
-            : v >= 1e4 ? (v / 1e4).toFixed(2) + '万手'
-            : v.toFixed(0) + '手';
-          if (isIntraday) {
-            // 分时：只要 开/收/涨跌幅（相对昨收）；时间/高低/量去掉
-            let pct = null;
-            // close=null 是全天槽位的空占位（如停牌段/未收盘时段），显示 -- 而非 NaN%
-            if (current && current.close != null && intradayPreClose > 0) {
-              pct = (current.close - intradayPreClose) / intradayPreClose * 100;
-            }
-            return [
-              { title: 'open', value: fmt2(current && current.open) },
-              { title: 'close', value: fmt2(current && current.close) },
-              { title: '涨跌幅', value: pct == null ? '--' : (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%' },
-            ];
-          }
-          // 日K涨跌幅：优先用 Swift 逐 bar 注入的 pct（首根无昨收为 null），
-          // 缺失时退化用前一根收盘推算
-          let pct = null;
-          if (current && current.pct != null) {
-            pct = current.pct;
-          } else if (current && prev && prev.close > 0 && current.close != null) {
-            pct = (current.close - prev.close) / prev.close * 100;
-          }
-          const rows = [
-            { title: 'time', value: '{time}' },
-            { title: '收盘价', value: fmt2(current && current.close) },
-            {
-              title: '涨跌幅',
-              value: pct == null ? '--' : (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%',
-              color: pct == null ? undefined : (pct >= 0 ? '#f6465d' : '#2ebd85'),
-            },
-          ];
-          if (current && current.turnoverRate > 0) {
-            rows.push({ title: '换手率', value: current.turnoverRate.toFixed(2) + '%' });
-          }
-          if (current && current.volumeRatio > 0) {
-            rows.push({ title: '量比', value: current.volumeRatio.toFixed(2) });
-          }
-          rows.push({ title: '成交量', value: fmtVol(current && current.volume) });
-          return rows;
-        },
-      },
+      // 顶部行情行改由 DOM 渲染（见 #quoteBar）：canvas 图例只支持纯文本，
+      // 画不了「红绿底 + 白字」徽标；模板返回空数组关掉内置图例
+      legend: { template: () => [] },
     },
   },
   indicator: {
@@ -258,6 +233,80 @@ function intraCreateTicks({ defaultTicks, bounding }) {
   });
 }
 
+// ===== 顶部行情行（DOM 版图例）=====
+// 内置 canvas 图例只支持纯文本（v10 TextTemplate 无背景），做不了「红绿底白字」徽标；
+// 规则：涨跌幅为红涨/绿跌底 + 白字徽标，其余（收盘价/换手率/量比/成交量）白字。
+// 十字线悬停跟随悬停根，移出图表回落到最后一根。
+const quoteBarEl = document.getElementById('quoteBar');
+let quoteRenderKey = '';  // 短路重复渲染（crosshair 每像素都触发）
+
+const qFmt2 = (v) => (v == null || isNaN(v)) ? '--' : v.toFixed(2);
+// 成交量（手）→ 中文习惯单位：万手 / 亿手
+const qFmtVol = (v) => (v == null || isNaN(v) || v <= 0) ? '--'
+  : v >= 1e8 ? (v / 1e8).toFixed(2) + '亿手'
+  : v >= 1e4 ? (v / 1e4).toFixed(2) + '万手'
+  : v.toFixed(0) + '手';
+const qFmtDay = (ts) => {
+  const d = new Date(ts), p = (n) => (n < 10 ? '0' + n : '' + n);
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+};
+const qBadge = (pct) => {
+  if (pct == null || isNaN(pct)) return '<span class="qbadge flat">--</span>';
+  const cls = pct > 0 ? 'up' : pct < 0 ? 'down' : 'flat';
+  return '<span class="qbadge ' + cls + '">' + (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%</span>';
+};
+const qItem = (label, value) =>
+  '<span class="qitem"><span class="ql">' + label + '</span><span class="qv">' + value + '</span></span>';
+
+// 无十字线时的默认根：日K 取最后一根；分时取最后一个非空槽（全天 242 槽含 null 占位）
+function lastQuoteIndex() {
+  if (!isIntraday) return barCache.length - 1;
+  for (let i = barCache.length - 1; i >= 0; i--) {
+    if (barCache[i] && barCache[i].close != null) return i;
+  }
+  return -1;
+}
+
+function renderQuoteBar(dataIndex) {
+  if (!chart || !barCache.length) { quoteBarEl.style.display = 'none'; return; }
+  const i = (dataIndex == null || dataIndex < 0 || dataIndex >= barCache.length)
+    ? lastQuoteIndex() : dataIndex;
+  const b = barCache[i];
+  if (!b) { quoteBarEl.style.display = 'none'; return; }
+  // key 含模式/时间戳/索引：同根不重建 DOM；数据入口换 barCache 时会置空 key 强制重画
+  const key = (isIntraday ? 'i' : 'd') + b.timestamp + ':' + i + ':' + intradayPreClose;
+  if (key !== quoteRenderKey) {
+    quoteRenderKey = key;
+    const parts = [];
+    if (isIntraday) {
+      // 分时：只要 开/收/涨跌幅（相对昨收）；时间/高低/量去掉
+      // close=null 是全天槽位的空占位（如停牌段/未收盘时段），显示 -- 而非 NaN%
+      let pct = null;
+      if (b.close != null && intradayPreClose > 0) {
+        pct = (b.close - intradayPreClose) / intradayPreClose * 100;
+      }
+      parts.push(qItem('open', qFmt2(b.open)));
+      parts.push(qItem('close', qFmt2(b.close)));
+      parts.push(qItem('涨跌幅', qBadge(pct)));
+    } else {
+      // 日K涨跌幅：优先用 Swift 逐 bar 注入的 pct（首根无昨收为 null），缺失时退化用前一根收盘推算
+      let pct = b.pct != null ? b.pct : null;
+      if (pct == null && i > 0) {
+        const prev = barCache[i - 1];
+        if (prev && prev.close > 0 && b.close != null) pct = (b.close - prev.close) / prev.close * 100;
+      }
+      parts.push('<span class="qdate">' + qFmtDay(b.timestamp) + '</span>');
+      parts.push(qItem('收盘价', qFmt2(b.close)));
+      parts.push(qItem('涨跌幅', qBadge(pct)));
+      if (b.turnoverRate > 0) parts.push(qItem('换手率', b.turnoverRate.toFixed(2) + '%'));
+      if (b.volumeRatio > 0) parts.push(qItem('量比', b.volumeRatio.toFixed(2)));
+      parts.push(qItem('成交量', qFmtVol(b.volume)));
+    }
+    quoteBarEl.innerHTML = parts.join('');
+  }
+  quoteBarEl.style.display = 'flex';
+}
+
 function initChart() {
   if (chart) return;
   const container = document.getElementById('chart');
@@ -290,6 +339,23 @@ function initChart() {
     applyPaneHeights();
     if (standaloneIntraday) fitIntradayWidth();  // 分时窗口拖宽后重新撑满
   }).observe(container);
+
+  // 顶部行情行跟随十字线。v10.0.2 的 onCrosshairChange 载荷只有 {x, y, paneId}
+  // （无 dataIndex），需 convertFromPixel 换算（同双击处理的做法）；
+  // 移出图表不保证触发 action，用 mouseleave 兜底回落到最后一根
+  try {
+    chart.subscribeAction('onCrosshairChange', (c) => {
+      let di = null;
+      if (c && c.x != null) {
+        try {
+          const hit = chart.convertFromPixel({ x: c.x, y: c.y });
+          if (hit && hit.dataIndex != null && hit.dataIndex >= 0) di = hit.dataIndex;
+        } catch (e) { /* 旧版本无此 API 时恒显最后一根 */ }
+      }
+      renderQuoteBar(di);
+    });
+  } catch (e) { /* 旧版本无此 action 时行情行恒显最后一根 */ }
+  container.addEventListener('mouseleave', () => renderQuoteBar(null));
 
   // 双击：日K 上双击某根蜡烛 → 通知 Swift 拉当天分时；分时上双击 → 返回日K（独立窗口模式无操作）
   container.addEventListener('dblclick', (e) => {
@@ -428,6 +494,8 @@ function updateData(json, scrollTs) {
   // 每次传入新对象字面量，保证引用不等 → 必然触发 resetData 重新加载
   chart.setSymbol({ symbol: 'local', pricePrecision: 2, volumePrecision: 0 });
   chart.setPeriod({ type: 'day' });
+  quoteRenderKey = '';  // 换数据源强制重画（同末根时间戳的刷新也生效）
+  renderQuoteBar(null);
   if (scrollTs > 0) {
     // 等待首帧布局完成后再定位，否则像素坐标未就绪
     requestAnimationFrame(() => requestAnimationFrame(() => {
@@ -499,6 +567,8 @@ function showIntraday(json, day, preClose) {
   applyPaneHeights();
   chart.setSymbol({ symbol: 'local_min', pricePrecision: 2, volumePrecision: 0 });
   chart.setPeriod({ type: 'minute' });
+  quoteRenderKey = '';  // 换数据源强制重画（同末根时间戳的刷新也生效）
+  renderQuoteBar(null);
   if (standaloneIntraday) {
     // 等数据经 loader 落位后再按宽度平摊（双 rAF 保证首帧布局完成）
     requestAnimationFrame(() => requestAnimationFrame(() => fitIntradayWidth()));
@@ -523,6 +593,8 @@ function showDaily() {
   if (dayBars.length) barCache = dayBars;
   chart.setSymbol({ symbol: 'local', pricePrecision: 2, volumePrecision: 0 });
   chart.setPeriod({ type: 'day' });
+  quoteRenderKey = '';  // 换数据源强制重画（同末根时间戳的刷新也生效）
+  renderQuoteBar(null);
 }
 
 // 独立分时窗口模式：由 Swift 在 showIntraday 前调用；窗口标题栏自带标题/关闭/复制，
@@ -553,6 +625,8 @@ function fitIntradayWidth() {
 
 function showError(msg) {
   document.getElementById('hint').style.display = 'none';
+  quoteBarEl.style.display = 'none';
+  quoteRenderKey = '';
   const e = document.getElementById('error');
   e.textContent = msg;
   e.style.display = 'flex';
