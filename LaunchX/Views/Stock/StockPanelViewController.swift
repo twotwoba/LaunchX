@@ -18,6 +18,8 @@ class StockPanelViewController: NSViewController {
     var inputTextView: NSTextView?
     var inputPlaceholder: NSTextField?
     var inputHeightConstraint: NSLayoutConstraint?
+    /// 历史查询下拉按钮（输入框左侧，点击弹出最近查过的股票）
+    var historyButton: NSButton?
 
     // 输入行右侧控件
     var templatePopup: NSPopUpButton?

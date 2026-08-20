@@ -90,6 +90,10 @@ extension StockPanelViewController: NSTextViewDelegate {
                 self.bundles = bundle.map { [$0] } ?? []
                 self.renderChart(bundle: bundle, errorMsg: errorMsg)
                 self.setLoading(false)
+                // 查询成功才记历史（失败/多候选不记）
+                if let bundle = bundle {
+                    StockRecentStore.record(code: bundle.code, name: bundle.name)
+                }
             }
         }
     }
@@ -186,6 +190,63 @@ extension StockPanelViewController: NSTextViewDelegate {
         let window = bars[from..<endIdx]
         let sum = window.reduce(0) { $0 + $1.volume }
         return sum / Double(window.count)
+    }
+
+    // MARK: - 历史查询下拉
+
+    /// 点击历史按钮：在按钮下方弹出最近查过的股票列表。
+    /// 删除一条后菜单重弹（可连续删除）；选择/清空/未操作则正常关闭——
+    /// 以落盘条数变化判断，无需额外状态位。
+    @objc func showHistoryMenu(_ sender: NSButton) {
+        while true {
+            let before = StockRecentStore.load()
+            let menu = buildHistoryMenu(before)
+            menu.popUp(
+                positioning: nil,
+                at: NSPoint(x: 0, y: sender.bounds.height + 4),
+                in: sender
+            )
+            let after = StockRecentStore.load()
+            // 未删除（选择/清空/直接关闭）或已删空 → 结束循环
+            if after.count == before.count || after.isEmpty { break }
+        }
+    }
+
+    private func buildHistoryMenu(_ list: [StockRecentQuery]) -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        if list.isEmpty {
+            let item = NSMenuItem(title: "暂无查询历史", action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            menu.addItem(item)
+            return menu
+        }
+        for q in list {
+            let item = NSMenuItem()
+            let row = StockHistoryMenuRow(query: q)
+            row.enclosingMenu = menu
+            row.onSelect = { [weak self] in self?.selectRecent(q) }
+            row.onDelete = { _ = StockRecentStore.remove(code: q.code) }
+            item.view = row
+            menu.addItem(item)
+        }
+        menu.addItem(.separator())
+        let clear = NSMenuItem(title: "清空历史", action: #selector(clearRecentHistory), keyEquivalent: "")
+        clear.target = self
+        menu.addItem(clear)
+        return menu
+    }
+
+    /// 点历史条目：把代码填进输入框（代码无歧义）并直接查询
+    private func selectRecent(_ q: StockRecentQuery) {
+        inputTextView?.string = q.code
+        inputPlaceholder?.isHidden = true
+        updateInputHeight()
+        performQuery()
+    }
+
+    @objc private func clearRecentHistory() {
+        StockRecentStore.removeAll()
     }
 
     // MARK: - 状态辅助

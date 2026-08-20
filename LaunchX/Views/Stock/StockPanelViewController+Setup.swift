@@ -127,6 +127,12 @@ extension StockPanelViewController {
         let heightC = scroll.heightAnchor.constraint(equalToConstant: inputMinHeight)
         self.inputHeightConstraint = heightC
 
+        // 输入框左侧：历史查询下拉（点击弹出最近查过的股票，点击条目直接切换查询）
+        let history = makeButton(title: "", symbol: "clock.arrow.circlepath", action: #selector(showHistoryMenu))
+        history.toolTip = "查询历史"
+        containerView.addSubview(history)
+        self.historyButton = history
+
         // 输入框右侧：AI 上下文模板 + AI 分析（与输入框垂直居中）
         let popup = NSPopUpButton()
         popup.controlSize = .small
@@ -142,7 +148,13 @@ extension StockPanelViewController {
 
         NSLayoutConstraint.activate([
             scroll.topAnchor.constraint(equalTo: titleBar.bottomAnchor, constant: 4),
-            scroll.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 16),
+
+            history.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 16),
+            history.centerYAnchor.constraint(equalTo: scroll.centerYAnchor),
+            history.widthAnchor.constraint(equalToConstant: 36),
+            history.heightAnchor.constraint(equalToConstant: 26),
+
+            scroll.leadingAnchor.constraint(equalTo: history.trailingAnchor, constant: 8),
 
             analyze.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -16),
             analyze.centerYAnchor.constraint(equalTo: scroll.centerYAnchor),
