@@ -258,10 +258,14 @@ extension StockPanelViewController: NSTextViewDelegate {
     }
 
     func setAIPlaceholder(_ text: String) {
-        // 清空（新查询/新分析）时一并丢弃分段缓冲与挂起的渲染任务
+        // 清空（新查询/新分析）时一并丢弃分段缓冲、挂起的渲染任务与增量渲染状态
+        // （渲染器记录着旧内容的 utf16 偏移，不重置会导致新内容 offset 错乱）
         aiRenderTick?.cancel()
         aiRenderTick = nil
         aiSegments.removeAll()
+        streamRenderer?.reset()
+        aiLoadedFromCache = false
+        aiGeneration += 1
         guard let tv = aiTextView else { return }
         tv.string = text
     }

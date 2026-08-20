@@ -3,10 +3,20 @@ import AppKit
 /// 轻量 Markdown → NSAttributedString 渲染器，用于 AI 分析流式输出的富文本展示。
 /// 覆盖 AI 输出常见子集：ATX 标题、分隔线、引用块、无序/有序列表（两级嵌套）、
 /// 围栏代码块、管道表格（等宽对齐）；行内支持 粗体/斜体/删除线/行内代码/链接。
-/// 整体渲染（非增量），配合上层节流（120ms）足够流式场景使用。
+/// 整体渲染（非增量），配合上层节流（120ms）足够流式场景使用；
+/// 增量渲染场景传 isContinuation: true（本段是文档中段，首块仍按非首块计间距）。
 enum MiniMarkdown {
 
     // MARK: - 基础样式
+
+    /// 渲染上下文：输出缓冲 + 首块标记（决定各块段首间距，替代 out.length == 0 判断，
+    /// 使「稳定前缀 + 活跃尾部」的拼接渲染与全量渲染间距一致）。
+    /// 用 struct：模块默认 MainActor 隔离下，Swift class 在同步非 task 上下文释放
+    /// 会走隔离 deinit 的 back-deploy 路径触发运行时崩溃（XCTest 同步用例必崩）
+    private struct RenderContext {
+        let out = NSMutableAttributedString()
+        var isFirstBlock = true
+    }
 
     private static let bodyFont = NSFont.systemFont(ofSize: 13)
     private static let codeFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
@@ -31,8 +41,11 @@ enum MiniMarkdown {
 
     // MARK: - 入口
 
-    static func render(_ markdown: String) -> NSAttributedString {
-        let out = NSMutableAttributedString()
+    /// - Parameter isContinuation: 本段文本在完整文档中位于其他内容之后（增量渲染的
+    ///   稳定前缀/活跃尾部拼接场景）。影响首块的段首间距，使拼接结果与全量渲染一致。
+    static func render(_ markdown: String, isContinuation: Bool = false) -> NSAttributedString {
+        var ctx = RenderContext()
+        ctx.isFirstBlock = !isContinuation
         let lines = markdown
             .replacingOccurrences(of: "\r\n", with: "\n")
             .components(separatedBy: "\n")
@@ -52,16 +65,16 @@ enum MiniMarkdown {
                     i += 1
                 }
                 if i < lines.count { i += 1 }  // 跳过收尾 ```
-                appendCodeBlock(code, to: out)
+                appendCodeBlock(code, into: &ctx)
                 continue
             }
             if let (level, text) = parseHeading(trimmed) {
-                appendHeading(text, level: level, to: out)
+                appendHeading(text, level: level, into: &ctx)
                 i += 1
                 continue
             }
             if isHRule(trimmed) {
-                appendHRule(to: out)
+                appendHRule(into: &ctx)
                 i += 1
                 continue
             }
@@ -75,7 +88,7 @@ enum MiniMarkdown {
                     rows.append(tableCells(t))
                     i += 1
                 }
-                appendTable(rows, to: out)
+                appendTable(rows, into: &ctx)
                 continue
             }
             // 引用块
@@ -87,7 +100,7 @@ enum MiniMarkdown {
                     quote.append(String(t.dropFirst()).trimmingCharacters(in: .whitespaces))
                     i += 1
                 }
-                appendQuote(quote.joined(separator: " "), to: out)
+                appendQuote(quote.joined(separator: " "), into: &ctx)
                 continue
             }
             // 列表（含缩进续行）
@@ -108,7 +121,7 @@ enum MiniMarkdown {
                         break
                     }
                 }
-                appendList(items, to: out)
+                appendList(items, into: &ctx)
                 continue
             }
             // 普通段落：连续普通行合并（软换行 → 空格）
@@ -120,28 +133,31 @@ enum MiniMarkdown {
                 para.append(t)
                 i += 1
             }
-            appendParagraph(para.joined(separator: " "), to: out)
+            appendParagraph(para.joined(separator: " "), into: &ctx)
         }
-        return out
+        return ctx.out
     }
 
     // MARK: - 块级元素
 
-    private static func appendHeading(_ text: String, level: Int, to out: NSMutableAttributedString) {
+    private static func appendHeading(_ text: String, level: Int, into ctx: inout RenderContext) {
+        let out = ctx.out
         let size: CGFloat = [1: 16, 2: 15, 3: 14][min(level, 3)] ?? 13
         let font = NSFont.systemFont(ofSize: size, weight: .bold)
-        let ps = paraStyle(first: out.length == 0)
-        ps.paragraphSpacingBefore = out.length == 0 ? 0 : 10
+        let ps = paraStyle(first: ctx.isFirstBlock)
+        ps.paragraphSpacingBefore = ctx.isFirstBlock ? 0 : 10
         ps.paragraphSpacing = 4
         out.append(NSAttributedString(string: text + "\n", attributes: [
             .font: font,
             .foregroundColor: NSColor.labelColor,
             .paragraphStyle: ps,
         ]))
+        ctx.isFirstBlock = false
     }
 
-    private static func appendParagraph(_ text: String, to out: NSMutableAttributedString) {
-        let ps = paraStyle(first: out.length == 0)
+    private static func appendParagraph(_ text: String, into ctx: inout RenderContext) {
+        let out = ctx.out
+        let ps = paraStyle(first: ctx.isFirstBlock)
         ps.lineSpacing = 3
         ps.paragraphSpacing = 5
         inline(text, into: out, base: [
@@ -150,10 +166,12 @@ enum MiniMarkdown {
             .paragraphStyle: ps,
         ])
         out.append(NSAttributedString(string: "\n"))
+        ctx.isFirstBlock = false
     }
 
-    private static func appendQuote(_ text: String, to out: NSMutableAttributedString) {
-        let ps = paraStyle(first: out.length == 0)
+    private static func appendQuote(_ text: String, into ctx: inout RenderContext) {
+        let out = ctx.out
+        let ps = paraStyle(first: ctx.isFirstBlock)
         ps.firstLineHeadIndent = 10
         ps.headIndent = 10
         ps.lineSpacing = 2
@@ -165,10 +183,12 @@ enum MiniMarkdown {
             .paragraphStyle: ps,
         ])
         out.append(NSAttributedString(string: "\n"))
+        ctx.isFirstBlock = false
     }
 
-    private static func appendHRule(to out: NSMutableAttributedString) {
-        let ps = paraStyle(first: out.length == 0)
+    private static func appendHRule(into ctx: inout RenderContext) {
+        let out = ctx.out
+        let ps = paraStyle(first: ctx.isFirstBlock)
         ps.alignment = .center
         ps.paragraphSpacingBefore = 6
         ps.paragraphSpacing = 6
@@ -177,11 +197,13 @@ enum MiniMarkdown {
             .foregroundColor: NSColor.separatorColor,
             .paragraphStyle: ps,
         ]))
+        ctx.isFirstBlock = false
     }
 
-    private static func appendCodeBlock(_ lines: [String], to out: NSMutableAttributedString) {
+    private static func appendCodeBlock(_ lines: [String], into ctx: inout RenderContext) {
+        let out = ctx.out
         // 单一段落内用 \n 换行：底色连续不断档
-        let ps = paraStyle(first: out.length == 0)
+        let ps = paraStyle(first: ctx.isFirstBlock)
         ps.paragraphSpacingBefore = 6
         ps.paragraphSpacing = 6
         ps.firstLineHeadIndent = 6
@@ -193,13 +215,15 @@ enum MiniMarkdown {
             .backgroundColor: codeBackground,
             .paragraphStyle: ps,
         ]))
+        ctx.isFirstBlock = false
     }
 
     private static func appendList(
-        _ items: [(level: Int, marker: String, text: String)], to out: NSMutableAttributedString
+        _ items: [(level: Int, marker: String, text: String)], into ctx: inout RenderContext
     ) {
+        let out = ctx.out
         for (idx, item) in items.enumerated() {
-            let ps = paraStyle(first: out.length == 0)
+            let ps = paraStyle(first: ctx.isFirstBlock)
             let indent = CGFloat(4 + item.level * 16)
             ps.firstLineHeadIndent = indent
             ps.headIndent = indent + 16  // 折行对齐到正文，避开序号
@@ -219,9 +243,11 @@ enum MiniMarkdown {
             ])
             out.append(NSAttributedString(string: "\n"))
         }
+        ctx.isFirstBlock = false
     }
 
-    private static func appendTable(_ rows: [[String]], to out: NSMutableAttributedString) {
+    private static func appendTable(_ rows: [[String]], into ctx: inout RenderContext) {
+        let out = ctx.out
         guard !rows.isEmpty else { return }
         let colCount = rows.map(\.count).max() ?? 0
         guard colCount > 0 else { return }
@@ -233,7 +259,7 @@ enum MiniMarkdown {
         }
         let widths = (0..<colCount).map { c in padded.map { displayWidth($0[c]) }.max() ?? 0 }
 
-        let ps = paraStyle(first: out.length == 0)
+        let ps = paraStyle(first: ctx.isFirstBlock)
         ps.paragraphSpacingBefore = 6
         ps.paragraphSpacing = 6
         ps.headIndent = 4
@@ -251,6 +277,7 @@ enum MiniMarkdown {
             if r == 0 { attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue }
             out.append(NSAttributedString(string: line + "\n", attributes: attrs))
         }
+        ctx.isFirstBlock = false
     }
 
     // MARK: - 行内元素

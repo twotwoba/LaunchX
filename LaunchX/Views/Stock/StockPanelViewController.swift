@@ -39,6 +39,11 @@ class StockPanelViewController: NSViewController {
     var loadingIndicator: NSProgressIndicator?
     var disclaimerLabel: NSTextField?
 
+    // 悬浮回图按钮（滚到下方 AI 区时出现，点击滚回顶部图表）
+    var backToChartButton: NSButton?
+    var backButtonShown = false
+    var scrollObserverToken: NSObjectProtocol?
+
     // MARK: - 状态
 
     var settings = StockSettings.load()
@@ -48,8 +53,15 @@ class StockPanelViewController: NSViewController {
     var isAnalyzing = false
     /// 最近一次分析是否失败（失败时按钮允许直接重试，而不是仅滚动定位）
     var lastAnalysisFailed = false
+    /// 当前 AI 内容是否来自缓存装载（此时点击「AI 分析」= 清空并重新生成）
+    var aiLoadedFromCache = false
+    /// AI 缓冲代际：每次清空 AI 区 +1。延迟写缓存时校验，防止被新查询/分析
+    /// 取代的旧任务把已作废的半截内容落盘
+    var aiGeneration = 0
     /// AI 输出分段缓冲（流式到达，相邻同风格段合并；正文段渲染时走 Markdown）
     var aiSegments: [(style: AIOutputStyle, text: String)] = []
+    /// 流式增量渲染器（稳定前缀 + 活跃尾部；清空 AI 区时必须 reset）
+    var streamRenderer: AIStreamRenderer?
     /// 流式渲染节流任务（120ms 内多个 chunk 合并为一次全文重渲）
     var aiRenderTick: DispatchWorkItem?
     /// 当前查询/分析任务（用于取消）
@@ -104,6 +116,9 @@ class StockPanelViewController: NSViewController {
     deinit {
         queryTask?.cancel()
         analyzeTask?.cancel()
+        if let token = scrollObserverToken {
+            NotificationCenter.default.removeObserver(token)
+        }
         NotificationCenter.default.removeObserver(self)
         inputTextView?.delegate = nil
     }

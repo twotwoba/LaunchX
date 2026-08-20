@@ -44,6 +44,7 @@ extension StockPanelViewController {
         setupTitleBar()
         setupInputArea()
         setupContentArea()
+        setupBackToChartButton()
         setupLoadingIndicator()
 
         handleLiquidGlassSettingDidChange()
@@ -233,6 +234,8 @@ extension StockPanelViewController {
         self.aiTextView = aiTV
 
         let clip = outerScroll.contentView
+        // 悬浮回图按钮的显隐由滚动位置驱动（手动滚动与程序化动画都会逐帧发此通知）
+        clip.postsBoundsChangedNotifications = true
         NSLayoutConstraint.activate([
             // 外层滚动视图占据输入框以下整个内容区
             outerScroll.topAnchor.constraint(equalTo: inputScrollView.bottomAnchor, constant: 6),
@@ -302,11 +305,78 @@ extension StockPanelViewController {
                 clip.animator().setBoundsOrigin(target)
             }, completionHandler: {
                 outer.reflectScrolledClipView(clip)
+                self.updateBackChartButton()
             })
         } else {
             clip.scroll(to: target)
             outer.reflectScrolledClipView(clip)
+            updateBackChartButton()
         }
+    }
+
+    // MARK: - 悬浮回图按钮（滚到下方 AI 区时浮现在右下角）
+
+    /// 在 setupContentArea 之后调用：add 顺序即 z-order，天然浮在内容滚动区之上
+    func setupBackToChartButton() {
+        guard let containerView = containerView,
+            let clip = contentScrollView?.contentView
+        else { return }
+
+        let btn = NSButton()
+        btn.bezelStyle = .inline
+        btn.isBordered = false
+        if let img = NSImage(systemSymbolName: "chevron.up", accessibilityDescription: "回到图表") {
+            btn.image = img
+            btn.imageScaling = .scaleProportionallyDown
+        }
+        btn.toolTip = "回到图表"
+        btn.target = self
+        btn.action = #selector(scrollBackToChart)
+        btn.translatesAutoresizingMaskIntoConstraints = false
+        btn.wantsLayer = true
+        btn.layer?.cornerRadius = 18
+        btn.layer?.cornerCurve = .continuous
+        btn.layer?.backgroundColor = NSColor.quaternaryLabelColor.cgColor
+        btn.alphaValue = 0
+        btn.isHidden = true
+        containerView.addSubview(btn)
+        self.backToChartButton = btn
+
+        NSLayoutConstraint.activate([
+            btn.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -20),
+            btn.bottomAnchor.constraint(equalTo: containerView.bottomAnchor, constant: -16),
+            btn.widthAnchor.constraint(equalToConstant: 36),
+            btn.heightAnchor.constraint(equalToConstant: 36),
+        ])
+
+        // object 显式传外层 clip：避免收到 AI 区内层 aiScrollView 的同名通知
+        scrollObserverToken = NotificationCenter.default.addObserver(
+            forName: NSView.boundsDidChangeNotification, object: clip, queue: .main
+        ) { [weak self] _ in
+            self?.updateBackChartButton()
+        }
+    }
+
+    /// 幂等切换按钮显隐（每帧回调只做一次比较）；
+    /// completion 以状态收口，防快速来回滚动时 hide/isHidden 竞态
+    func updateBackChartButton() {
+        guard let btn = backToChartButton else { return }
+        let y = contentScrollView?.contentView.bounds.origin.y ?? 0
+        let show = y > 60
+        guard show != backButtonShown else { return }
+        backButtonShown = show
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = 0.15
+            if show { btn.isHidden = false }
+            btn.animator().alphaValue = show ? 1 : 0
+        }, completionHandler: { [weak self] in
+            guard let self = self, !self.backButtonShown else { return }
+            btn.isHidden = true
+        })
+    }
+
+    @objc func scrollBackToChart() {
+        scrollToShowChart()
     }
 
     func setupLoadingIndicator() {
