@@ -101,7 +101,7 @@ extension StockPanelViewController {
         guard let containerView = containerView, let titleBar = titleBar else { return }
 
         let scroll = NSScrollView()
-        scroll.hasVerticalScroller = true
+        scroll.verticalScroller = StockHiddenScroller()
         scroll.hasHorizontalScroller = false
         scroll.autohidesScrollers = true
         scroll.borderType = .noBorder
@@ -183,7 +183,6 @@ extension StockPanelViewController {
 
         // —— 外层滚动容器（图表与 AI 区共用）——
         let outerScroll = makeScrollView()
-        outerScroll.hasVerticalScroller = true
         outerScroll.hasHorizontalScroller = false
         outerScroll.horizontalScrollElasticity = .none
         containerView.addSubview(outerScroll)
@@ -481,7 +480,8 @@ extension StockPanelViewController {
 
     private func makeScrollView() -> NSScrollView {
         let scroll = NSScrollView()
-        scroll.hasVerticalScroller = true
+        // 隐形滚动条：保留滚轮/程序化滚动，只是不绘制指示条
+        scroll.verticalScroller = StockHiddenScroller()
         scroll.hasHorizontalScroller = false
         scroll.autohidesScrollers = true
         scroll.borderType = .noBorder
@@ -516,4 +516,11 @@ extension StockPanelViewController {
 /// 普通 NSView 非 flipped（y=0 为底部），滚动目标会上下颠倒。
 final class StockFlippedContentView: NSView {
     override var isFlipped: Bool { true }
+}
+
+/// 隐形滚动条：滚动视图保留 NSScrollView 全部滚动行为
+/// （滚轮/触控板、程序化 scroll(to:) 动画、回弹），但不绘制任何指示条。
+/// 直接 hasVerticalScroller = false 可能影响部分滚动手势，故用空绘制的子类替代。
+final class StockHiddenScroller: NSScroller {
+    override func draw(_ dirtyRect: NSRect) {}
 }
