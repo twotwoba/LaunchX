@@ -129,7 +129,9 @@ const MACD_LINE_STYLES = { lines: [
   { color: '#1677FF' },   // 原紫线 → 蓝
 ] };
 
-// A 股惯例：红涨绿跌；蜡烛实心；副图（VOL/MACD）柱色与主图一致
+// A 股惯例：红涨绿跌。蜡烛按库默认阴阳线规则（收 vs 开）——上市首日等无昨收的 K 线
+// 也能正确显色；一字涨停/跌停（开==收）会被判平盘画灰，由 massageOnePriceBars 按
+// 昨收方向微调喂库的 open 补成涨红/跌绿；副图（VOL/MACD）柱色与主图一致
 const CHART_STYLES = {
   grid: {
     horizontal: { color: 'rgba(255,255,255,0.05)' },
@@ -311,8 +313,8 @@ function renderQuoteBar(dataIndex) {
       if (b.close != null && intradayPreClose > 0) {
         pct = (b.close - intradayPreClose) / intradayPreClose * 100;
       }
-      parts.push(qItem('open', qFmt2(b.open)));
-      parts.push(qItem('close', qFmt2(b.close)));
+      parts.push(qItem('开盘', qFmt2(b.open)));
+      parts.push(qItem('收盘', qFmt2(b.close)));
       parts.push(qItem('涨跌幅', qBadge(pct)));
     } else {
       // 日K涨跌幅：优先用 Swift 逐 bar 注入的 pct（首根无昨收为 null），缺失时退化用前一根收盘推算
@@ -372,7 +374,8 @@ function initChart() {
   // setSymbol/setPeriod 触发 resetData → getBars('init')。历史/未来无增量，callback 第二参 false 关闭加载更多。
   chart.setDataLoader({
     getBars: ({ type, callback }) => {
-      if (type === 'init') callback(barCache, false);
+      // 日K喂微调过的 fedBars（一字板显色用）；分时直接喂 barCache（面积线/量柱不看 open 配色）
+      if (type === 'init') callback(!isIntraday && fedBars.length ? fedBars : barCache, false);
       else callback([], false);
     }
   });
@@ -536,8 +539,9 @@ try {
 } catch (e) { /* 已注册或旧版本 */ }
 
 // 日K量柱（万手）：内置 VOL 显示原始手数，大盘股日成交几十万手 → 轴与图例数字过长。
-// 按 1 万手缩放展示（柱形比例不变），颜色与蜡烛同规则（收 ≥ 开 → 红），
-// 用「收 ≥ 昨收」会在高开低走/低开高走的日子和蜡烛分叉，看着像 bug
+// 按 1 万手缩放展示（柱形比例不变），颜色与蜡烛同规则（收 ≥ 开 → 红）。
+// 一字板已由 massageOnePriceBars 微调喂库的 open（涨→open 略低于收，跌→略高），
+// 量柱读的是同一份喂库数据，柱色随蜡烛自然分叉不出错
 try {
   klinecharts.registerIndicator({
     name: 'VOLW',
@@ -559,6 +563,23 @@ try {
   });
 } catch (e) { /* 已注册或旧版本 */ }
 
+// 喂给库的日K数据：一字板 open 微调过（见 massageOnePriceBars）。
+// barCache 恒为真实值（DOM 行情行/涨跌幅读它），两套数据各司其职
+let fedBars = [];
+
+// 一字涨停/跌停（开==收）在阴阳线规则下判平盘画灰看不清；把喂库的 open 按昨收方向
+// 偏移价格 ~1e-9 的相对量（远小于 1 像素，蜡烛几何与数值展示不变）→ 涨红/跌绿。
+// 真平盘（收==昨收）与首根（无昨收，如上市首日按开收正常显色）不处理
+function massageOnePriceBars(bars) {
+  return bars.map((b, i) => {
+    if (b.open !== b.close) return b;
+    const ref = bars[i - 1] && bars[i - 1].close != null ? bars[i - 1].close : null;
+    if (ref == null || b.close === ref) return b;
+    const eps = Math.max(Math.abs(b.close), 1) * 1e-9;
+    return { ...b, open: b.close > ref ? b.close - eps : b.close + eps };
+  });
+}
+
 // 推入全量 K 线（json 字符串），并可选定位到指定时间戳
 function updateData(json, scrollTs) {
   initChart();
@@ -566,6 +587,7 @@ function updateData(json, scrollTs) {
   clearError();
   barCache = JSON.parse(json);
   dayBars = barCache;  // 供切回日K用
+  fedBars = massageOnePriceBars(barCache);
   if (isIntraday) { showDaily(); return; }
   // 每次传入新对象字面量，保证引用不等 → 必然触发 resetData 重新加载
   chart.setSymbol({ symbol: 'local', pricePrecision: 2, volumePrecision: 0 });
@@ -675,7 +697,7 @@ function showDaily() {
     chart.createIndicator({ name: 'MACD', paneId: 'pane_macd', styles: MACD_LINE_STYLES });
   } catch (e) {}
   applyPaneHeights();
-  if (dayBars.length) barCache = dayBars;
+  if (dayBars.length) { barCache = dayBars; fedBars = massageOnePriceBars(dayBars); }
   chart.setSymbol({ symbol: 'local', pricePrecision: 2, volumePrecision: 0 });
   chart.setPeriod({ type: 'day' });
   quoteRenderKey = '';  // 换数据源强制重画（同末根时间戳的刷新也生效）
