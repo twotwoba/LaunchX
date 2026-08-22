@@ -59,8 +59,10 @@ extension StockPanelViewController: NSTextViewDelegate {
             return
         }
 
-        // 取消上一次查询；新查询时滚回顶部图表区
+        // 取消上一次查询与在途 AI 分析（切股票必须停掉旧接口调用，
+        // 否则旧流继续在新股票界面生成，且 isAnalyzing 卡住导致新股票无法分析）
         queryTask?.cancel()
+        cancelOngoingAnalysis()
         scrollToShowChart()
         setLoading(true)
         chartView?.showHint("正在查询…")
@@ -258,13 +260,12 @@ extension StockPanelViewController: NSTextViewDelegate {
     }
 
     func setAIPlaceholder(_ text: String) {
-        // 清空（新查询/新分析）时一并丢弃分段缓冲、挂起的渲染任务与增量渲染状态
+        // 清空（新查询/新分析/切策略）时一并丢弃分段缓冲、挂起的渲染任务与增量渲染状态
         // （渲染器记录着旧内容的 utf16 偏移，不重置会导致新内容 offset 错乱）
         aiRenderTick?.cancel()
         aiRenderTick = nil
         aiSegments.removeAll()
         streamRenderer?.reset()
-        aiLoadedFromCache = false
         aiGeneration += 1
         guard let tv = aiTextView else { return }
         tv.string = text

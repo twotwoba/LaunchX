@@ -53,8 +53,6 @@ class StockPanelViewController: NSViewController {
     var isAnalyzing = false
     /// 最近一次分析是否失败（失败时按钮允许直接重试，而不是仅滚动定位）
     var lastAnalysisFailed = false
-    /// 当前 AI 内容是否来自缓存装载（此时点击「AI 分析」= 清空并重新生成）
-    var aiLoadedFromCache = false
     /// AI 缓冲代际：每次清空 AI 区 +1。延迟写缓存时校验，防止被新查询/分析
     /// 取代的旧任务把已作废的半截内容落盘
     var aiGeneration = 0

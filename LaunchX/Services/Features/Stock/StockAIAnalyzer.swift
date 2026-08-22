@@ -121,6 +121,10 @@ final class StockAIAnalyzer {
         let (bytes, response): (URLSession.AsyncBytes, URLResponse)
         do {
             (bytes, response) = try await session.bytes(for: req)
+        } catch is CancellationError {
+            throw CancellationError()  // 建连阶段就被取消：保持原样上抛，不包装成失败
+        } catch let e as URLError where e.code == .cancelled {
+            throw e
         } catch {
             throw StockAIError.network(error.localizedDescription)
         }

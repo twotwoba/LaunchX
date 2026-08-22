@@ -453,6 +453,10 @@ extension StockPanelViewController {
             settings.selectedTemplateID = id
             settings.save()
         }
+        // 策略是缓存 key 的一部分：切换即作废旧结果——停掉在途分析并清空 AI 区，
+        // 下一次「AI 分析」按新策略重新取数；切回旧策略当天则命中缓存秒装载
+        cancelOngoingAnalysis()
+        setAIPlaceholder("")
     }
 
     // MARK: - UI 工厂
