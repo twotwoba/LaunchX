@@ -125,6 +125,16 @@ extension StockPanelViewController {
         containerView.addSubview(placeholder)
         self.inputPlaceholder = placeholder
 
+        // 代码右侧的「（股票名称）」灰字后缀：查询成功后按代码实际宽度定位；
+        // 是覆盖层装饰而非输入内容，清空输入只需删掉代码
+        let badge = NSTextField(labelWithString: "")
+        badge.font = .systemFont(ofSize: 14)
+        badge.textColor = .placeholderTextColor
+        badge.isHidden = true
+        badge.translatesAutoresizingMaskIntoConstraints = false
+        containerView.addSubview(badge)
+        self.stockNameBadge = badge
+
         let heightC = scroll.heightAnchor.constraint(equalToConstant: inputMinHeight)
         self.inputHeightConstraint = heightC
 
@@ -170,7 +180,13 @@ extension StockPanelViewController {
 
             placeholder.centerYAnchor.constraint(equalTo: scroll.centerYAnchor),
             placeholder.leadingAnchor.constraint(equalTo: scroll.leadingAnchor, constant: 5),
+
+            badge.centerYAnchor.constraint(equalTo: scroll.centerYAnchor),
         ])
+        // leading 常量随代码文本宽度动态调整，须持有引用（初始藏在输入框左缘外不可见）
+        let badgeLeading = badge.leadingAnchor.constraint(equalTo: scroll.leadingAnchor, constant: 0)
+        badgeLeading.isActive = true
+        self.stockNameBadgeLeadingC = badgeLeading
     }
 
     // MARK: - 内容区（图表 + AI 分析同处一个纵向滚动视图）

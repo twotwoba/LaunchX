@@ -17,6 +17,10 @@ class StockPanelViewController: NSViewController {
     var inputScrollView: NSScrollView?
     var inputTextView: NSTextView?
     var inputPlaceholder: NSTextField?
+    /// 查询成功后代码右侧的「（股票名称）」灰字后缀：placeholder 风格装饰不占输入内容，
+    /// 清空输入（退格/全删代码）即整体消失；用户一旦手动编辑立即隐藏
+    var stockNameBadge: NSTextField?
+    var stockNameBadgeLeadingC: NSLayoutConstraint?
     var inputHeightConstraint: NSLayoutConstraint?
     /// 历史查询下拉按钮（输入框左侧，点击弹出最近查过的股票）
     var historyButton: NSButton?

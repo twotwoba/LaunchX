@@ -8,6 +8,7 @@ extension StockPanelViewController: NSTextViewDelegate {
     func textDidChange(_ notification: Notification) {
         guard let tv = inputTextView else { return }
         inputPlaceholder?.isHidden = !tv.string.isEmpty
+        stockNameBadge?.isHidden = true  // 用户手动编辑：代码与名称的配对展示作废
         updateInputHeight()
     }
 
@@ -63,6 +64,7 @@ extension StockPanelViewController: NSTextViewDelegate {
         // 否则旧流继续在新股票界面生成，且 isAnalyzing 卡住导致新股票无法分析）
         queryTask?.cancel()
         cancelOngoingAnalysis()
+        stockNameBadge?.isHidden = true  // 旧代码与名称的配对立即失效
         scrollToShowChart()
         setLoading(true)
         chartView?.showHint("正在查询…")
@@ -95,9 +97,27 @@ extension StockPanelViewController: NSTextViewDelegate {
                 // 查询成功才记历史（失败/多候选不记）
                 if let bundle = bundle {
                     StockRecentStore.record(code: bundle.code, name: bundle.name)
+                    self.canonicalizeInput(bundle: bundle)
                 }
             }
         }
+    }
+
+    /// 查询成功后规范化输入展示：不管输入的是代码还是名称，输入框统一留下代码，
+    /// 名称以 placeholder 风格灰字「（名称）」缀在代码右侧——不占输入内容，
+    /// 清空输入（退格/全删）只删代码，后缀随空态一起消失。
+    /// 定位按代码实测宽度（代码为定宽短串，无换行/滚动问题）
+    private func canonicalizeInput(bundle: StockDataBundle) {
+        inputTextView?.string = bundle.code
+        inputPlaceholder?.isHidden = true
+        updateInputHeight()
+        guard let badge = stockNameBadge else { return }
+        let font = inputTextView?.font ?? .systemFont(ofSize: 14)
+        let codeWidth = (bundle.code as NSString).size(withAttributes: [.font: font]).width
+        // lineFragmentPadding(4) 左内边距 + 代码宽 + 视觉间隙
+        stockNameBadgeLeadingC?.constant = 4 + codeWidth + 8
+        badge.stringValue = "（\(bundle.name)）"
+        badge.isHidden = false
     }
 
     // MARK: - 渲染图表
