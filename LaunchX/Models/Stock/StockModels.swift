@@ -198,7 +198,10 @@ struct StockIntradayContext {
     /// 分时源（腾讯minute/新浪/zzshare）是不复权价，日K是前复权价：股票在「该日之后、
     /// 今天之前」发生过除权除息时两套价格整体错位，分时的收盘/涨跌幅就会和日K对不上
     /// （例：002941 2026-07-09 除息后，3 月的分时比日K整体高约 1.2%）。
-    /// 以「当日日K收盘 / 分时末点价」为因子线性缩放各价格字段（量、额不参与复权），
+    /// 以「当日日K收盘 / 分时末点价」为因子线性缩放各价格字段。量不参与复权；
+    /// 额 = 价×量，须随价同因子缩放——图表均价线按「累计额/累计量」现算，
+    /// 额不缩放会使均价停留在不复权口径，与缩放后的价格错位一个复权因子的距离，
+    /// 主图范围被撑到 ±40%+ 导致价格线视觉上压成直线（上海沿浦 10转5 后回看分时的实例）。
     /// 缩放后分时收盘与涨跌幅和日K完全一致。锚点缺失或因子异常时保持原样。
     func alignedPoints(_ points: [StockTrendPoint]) -> [StockTrendPoint] {
         guard let anchor = close, anchor > 0,
@@ -214,7 +217,7 @@ struct StockIntradayContext {
                 open: p.open * scale, high: p.high * scale,
                 low: p.low * scale, price: p.price * scale,
                 avgPrice: p.avgPrice * scale,
-                volume: p.volume, amount: p.amount)
+                volume: p.volume, amount: p.amount * scale)
         }
     }
 }

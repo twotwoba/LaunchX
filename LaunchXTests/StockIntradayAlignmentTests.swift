@@ -18,9 +18,15 @@ final class StockIntradayAlignmentTests: XCTestCase {
         let out = context.alignedPoints(raw)
         XCTAssertEqual(out.last!.price, 16.49, accuracy: 0.001, "末点应精确对齐日K收盘")
         XCTAssertEqual(out.first!.price, 16.40 * 16.49 / 16.69, accuracy: 0.001)
-        // 量、额不参与复权缩放
+        // 量不参与复权；额 = 价×量，须随价同因子缩放，
+        // 否则图表均价线（Σ额/Σ量）与缩放后的价格错位，主图范围被撑爆（上海沿浦实例）
+        let scale = 16.49 / 16.69
         XCTAssertEqual(out.first!.volume, raw[0].volume)
-        XCTAssertEqual(out.first!.amount, raw[0].amount)
+        XCTAssertEqual(out.first!.amount, raw[0].amount * scale, accuracy: 0.001)
+        // 均价口径自洽：缩放后 Σ额/Σ量 == 原始均价 × 同一因子
+        let rawAvg = raw.reduce(0) { $0 + $1.amount } / (raw.reduce(0) { $0 + $1.volume } * 100)
+        let alignedAvg = out.reduce(0) { $0 + $1.amount } / (out.reduce(0) { $0 + $1.volume } * 100)
+        XCTAssertEqual(alignedAvg, rawAvg * scale, accuracy: 0.001)
         // 对齐后涨跌幅与日K一致：(16.49-16.35)/16.35
         let pct = (out.last!.price - 16.35) / 16.35 * 100
         XCTAssertEqual(pct, 0.856, accuracy: 0.01)
