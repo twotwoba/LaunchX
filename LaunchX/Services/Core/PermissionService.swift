@@ -10,21 +10,26 @@ class PermissionService: ObservableObject {
 
     private var refreshTimer: Timer?
     private var isChecking = false
+    /// 授权相关界面（欢迎引导页 / 设置页）当前是否可见：仅此时才轮询，
+    /// 平时完全无 timer，与全部授权后的状态一致
+    private var isPermissionUIVisible = false
 
     private init() {
+        // 启动仅做一次状态刷新供 UI 显示，不轮询；轮询由授权界面出现触发
         checkAllPermissions()
-        startPeriodicCheck()
     }
 
+    /// 授权相关界面出现时调用（引导页 / 设置页）：立即检查一次，
+    /// 若尚未全部授权则以 2s 轮询实时反馈授权进度（用户在系统设置里
+    /// 打勾后尽快翻转状态）；全部授予后自动停表且不再重启。
     func startPeriodicCheck() {
-        guard refreshTimer == nil else { return }
-        // 每 5 秒检查一次权限状态（权限变化不频繁，无需高频轮询）
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
-            self?.checkAllPermissions()
-        }
+        isPermissionUIVisible = true
+        checkAllPermissions()
     }
 
+    /// 授权相关界面关闭 / 应用退出时调用：无条件停表
     func stopPeriodicCheck() {
+        isPermissionUIVisible = false
         refreshTimer?.invalidate()
         refreshTimer = nil
     }
@@ -51,12 +56,26 @@ class PermissionService: ObservableObject {
                 }
                 self.isChecking = false
 
-                // 所有权限都已授予后，停止轮询以节省 CPU
                 if self.allPermissionsGranted {
-                    self.stopPeriodicCheck()
-                    print("[PermissionService] All permissions granted, stopped periodic check")
+                    // 全部授予：停表。此后即使授权界面仍开着也不重启——
+                    // 重开设置页时 startPeriodicCheck 会再做一次检查兜底
+                    if self.refreshTimer != nil {
+                        self.refreshTimer?.invalidate()
+                        self.refreshTimer = nil
+                        print("[PermissionService] All permissions granted, stopped periodic check")
+                    }
+                } else if self.isPermissionUIVisible {
+                    // 有界面在等结果且仍有未授予项 → 挂 2s 轮询（幂等）
+                    self.startRefreshTimer()
                 }
             }
+        }
+    }
+
+    private func startRefreshTimer() {
+        guard refreshTimer == nil else { return }
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            self?.checkAllPermissions()
         }
     }
 

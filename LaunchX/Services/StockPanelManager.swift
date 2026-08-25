@@ -11,6 +11,12 @@ class StockPanelManager: NSObject, NSWindowDelegate {
     private var isPinned: Bool = false
     private var previousApp: NSRunningApplication?
 
+    /// 面板隐藏后持续未使用多久则整体销毁，释放 WKWebView 页面状态与查询数据
+    /// （对应 Web Content 进程随后退出）。用一次性 DispatchWorkItem 而非常驻
+    /// Timer：隐藏期间零唤醒开销，期间再次打开即取消。
+    private static let idleReleaseInterval: TimeInterval = 3600
+    private var idleReleaseWork: DispatchWorkItem?
+
     private override init() {
         super.init()
     }
@@ -19,6 +25,10 @@ class StockPanelManager: NSObject, NSWindowDelegate {
 
     /// 显示面板
     func showPanel() {
+        // 正在使用：取消挂起的空闲回收
+        idleReleaseWork?.cancel()
+        idleReleaseWork = nil
+
         if let frontApp = NSWorkspace.shared.frontmostApplication,
             frontApp.bundleIdentifier != Bundle.main.bundleIdentifier
         {
@@ -81,6 +91,37 @@ class StockPanelManager: NSObject, NSWindowDelegate {
         guard isPanelVisible else { return }
         isPanelVisible = false
         panel?.orderOut(nil)
+        scheduleIdleRelease()
+    }
+
+    // MARK: - 空闲回收
+
+    /// 面板隐藏后开始计时，到点销毁面板；期间 showPanel 会取消。
+    private func scheduleIdleRelease() {
+        idleReleaseWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.teardownPanelIfNeeded()
+        }
+        idleReleaseWork = work
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + Self.idleReleaseInterval, execute: work)
+    }
+
+    /// 空闲到期：销毁面板与视图控制器，下次 showPanel 走 setupPanel 重建。
+    /// 位置/尺寸已持久化（savedOrigin / StockSettings），重建后自动恢复。
+    /// 必须先 chartView.tearDown() 破 message handler 的 retain cycle
+    /// （见 StockChartView.tearDown 注释），否则 WKWebView 永不释放，回收无效。
+    private func teardownPanelIfNeeded() {
+        guard panel != nil, !isPanelVisible else { return }
+        print("[StockPanelManager] 1h 未使用，释放股票面板")
+        viewController?.chartView?.tearDown()
+        // 先摘 delegate 再 close，避免 close 回调 windowWillClose 重新排回收任务
+        panel?.delegate = nil
+        panel?.contentViewController = nil
+        panel?.close()
+        panel = nil
+        viewController = nil
+        idleReleaseWork = nil
     }
 
     /// 切换面板显示
@@ -182,6 +223,7 @@ class StockPanelManager: NSObject, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         isPanelVisible = false
+        scheduleIdleRelease()
     }
 
     func windowDidResize(_ notification: Notification) {

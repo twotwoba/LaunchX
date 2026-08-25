@@ -35,6 +35,9 @@ struct SettingsView: View {
         .onAppear {
             PanelManager.shared.hidePanel()
 
+            // 设置窗可见期间开启权限轮询（2s，全部授予后自动停），关窗即停
+            PermissionService.shared.startPeriodicCheck()
+
             // 配置设置窗口，使其能在全屏应用上显示并跟随到当前空间
             DispatchQueue.main.async {
                 for window in NSApp.windows where window.isVisible {
@@ -47,6 +50,10 @@ struct SettingsView: View {
                     }
                 }
             }
+        }
+        .onDisappear {
+            // 设置窗关闭：停权限轮询，平时保持零 timer
+            PermissionService.shared.stopPeriodicCheck()
         }
     }
 }

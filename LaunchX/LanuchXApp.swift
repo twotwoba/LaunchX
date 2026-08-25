@@ -470,6 +470,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func openOnboarding() {
         print("LaunchX: Opening onboarding window")
 
+        // 引导页可见期间开启权限轮询（2s，全部授予后自动停）
+        PermissionService.shared.startPeriodicCheck()
+
         if onboardingWindow == nil {
             let rootView = OnboardingView { [weak self] in
                 guard let self = self else { return }
@@ -481,6 +484,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 // 2. 关闭引导页窗口并清理引用
                 self.onboardingWindow?.close()
                 self.onboardingWindow = nil
+                PermissionService.shared.stopPeriodicCheck()
                 print("LaunchX: Onboarding window closed")
             }
 
