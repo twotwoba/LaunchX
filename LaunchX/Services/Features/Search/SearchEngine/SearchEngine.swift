@@ -70,9 +70,9 @@ final class SearchEngine: ObservableObject {
     // WAL checkpoint 定时器（磁盘写入优化）
     private var walCheckpointTimer: Timer?
 
-    // Trie 定期重建（内存回收：Trie 只增不减，定期全量重建回收死节点，曾导致 30+GB 膨胀）
-    private var trieRebuildTimer: Timer?
-    private let trieRebuildInterval: TimeInterval = 6 * 3600  // 每 6 小时
+    // 索引结构定期紧凑重建（内存回收：前缀数组/bigram 倒排的懒删除会残留陈旧条目，定期重建回收）
+    private var indexRebuildTimer: Timer?
+    private let indexRebuildInterval: TimeInterval = 6 * 3600  // 每 6 小时
 
     // 失效条目审计（清理 App 未运行期间删除等 FSEvents 覆盖不到的死链）
     private var staleAuditScheduled = false
@@ -90,7 +90,7 @@ final class SearchEngine: ObservableObject {
         setupSettingsObserver()
         loadIndexOnStartup()
         startWALCheckpointTimer()
-        startTrieRebuildTimer()
+        startIndexRebuildTimer()
     }
 
     /// 监听 UserDefaults 变化，刷新缓存的 Settings
@@ -622,7 +622,8 @@ final class SearchEngine: ObservableObject {
 
     /// 前缀压缩：排序后仅保留互不为子路径的根（"/a/b" 吸收 "/a/b/c"）。
     /// rm -rf 会逐个上报子文件删除事件，压缩后变成一条子树级联删除。
-    private static func prefixCompress(_ paths: [String]) -> [String] {
+    /// （纯函数，开放 internal 供单元测试）
+    static func prefixCompress(_ paths: [String]) -> [String] {
         guard !paths.isEmpty else { return [] }
         var roots: [String] = []
         for path in paths.sorted() {
@@ -674,7 +675,8 @@ final class SearchEngine: ObservableObject {
     /// 判断路径本身是否是 package（app / framework 等 bundle）。
     /// 目录 created 事件命中 bundle 时不展开子树（bundle 内部文件不是用户要搜的条目），
     /// 与全量扫描的 .skipsPackageDescendants 行为对齐。
-    private static func isPackageBundle(path: String) -> Bool {
+    /// （纯函数，开放 internal 供单元测试）
+    static func isPackageBundle(path: String) -> Bool {
         let ext = (path as NSString).pathExtension.lowercased()
         return !ext.isEmpty && packageExtensions.contains(ext)
     }
@@ -733,12 +735,13 @@ final class SearchEngine: ObservableObject {
         }
     }
 
-    /// 启动 Trie 定期重建定时器（内存回收）。
-    /// MemoryIndex 移除时已会修剪 Trie，但仍可能残留碎片；定期全量重建可彻底回收死 TrieNode。
+    /// 启动索引结构定期紧凑重建定时器（内存回收）。
+    /// MemoryIndex 的前缀有序数组 / bigram 倒排采用懒删除（O(1) 删除，候选验证时过滤陈旧条目），
+    /// 定期全量重建回收这些残留引用，并顺带释放懒加载图标。
     /// 同时顺带触发一次失效条目审计。
-    private func startTrieRebuildTimer() {
-        trieRebuildTimer = Timer.scheduledTimer(withTimeInterval: trieRebuildInterval, repeats: true) { [weak self] _ in
-            self?.memoryIndex.rebuildTries()
+    private func startIndexRebuildTimer() {
+        indexRebuildTimer = Timer.scheduledTimer(withTimeInterval: indexRebuildInterval, repeats: true) { [weak self] _ in
+            self?.memoryIndex.rebuildIndexes()
             Task { @MainActor [weak self] in
                 self?.scheduleStaleEntryAudit(delay: 0)
             }
