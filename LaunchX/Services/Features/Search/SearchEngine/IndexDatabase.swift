@@ -231,54 +231,48 @@ final class IndexDatabase {
         }
     }
 
-    /// Delete records by path prefix (for incremental updates)
+    /// 删除路径本身及其全部子路径记录（目录删除的级联语义）。
+    ///
+    /// 利用 idx_path 的 B-tree 范围扫描：所有以 "path/" 开头的字符串恰好落在
+    /// [path + "/", path 去掉末尾 '/' 换成 '0') 区间内（'/' (0x2F) 的后继字节是 '0' (0x30)），
+    /// 避免 LIKE 方案需要转义 `%` / `_` 通配符的问题，且能走索引。
+    ///
     /// - Parameters:
-    ///   - pathPrefix: The path prefix to match
+    ///   - path: 要删除的文件或目录路径
     ///   - completion: Callback with deleted count
-    func deleteByPathPrefix(_ pathPrefix: String, completion: ((Int) -> Void)? = nil) {
+    func deleteSubtree(atPath path: String, completion: ((Int) -> Void)? = nil) {
         dbQueue.async { [weak self] in
-            guard let self = self else {
+            guard let self = self, !path.isEmpty else {
                 DispatchQueue.main.async { completion?(0) }
                 return
             }
 
-            // 使用 LIKE 查询删除匹配前缀的记录
-            let escapedPrefix = pathPrefix.replacingOccurrences(of: "'", with: "''")
-            let sql = "DELETE FROM files WHERE path LIKE '\(escapedPrefix)%'"
+            let prefix = path.hasSuffix("/") && path.count > 1
+                ? String(path.dropLast()) + "/" : path + "/"
+            // 上界：前缀去掉末尾 '/'（0x2F）后加 '0'（0x30），覆盖所有以 prefix 开头的字符串
+            let upperBound = String(prefix.dropLast()) + "0"
 
-            self.executeSQL(sql)
-            let deletedCount = Int(sqlite3_changes(self.db))
+            var deletedCount = 0
+            var stmt: OpaquePointer?
+            let sql = "DELETE FROM files WHERE path = ?1 OR (path >= ?2 AND path < ?3)"
+
+            if sqlite3_prepare_v2(self.db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt = stmt {
+                sqlite3_bind_text(stmt, 1, path, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_text(stmt, 2, prefix, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_text(stmt, 3, upperBound, -1, SQLITE_TRANSIENT)
+
+                if sqlite3_step(stmt) == SQLITE_DONE {
+                    deletedCount = Int(sqlite3_changes(self.db))
+                }
+                sqlite3_finalize(stmt)
+            } else {
+                print("IndexDatabase: deleteSubtree failed to prepare statement for \(path)")
+            }
 
             DispatchQueue.main.async {
                 completion?(deletedCount)
             }
         }
-    }
-
-    /// Get all paths with a specific prefix
-    /// - Parameter pathPrefix: The path prefix to match
-    /// - Returns: List of paths
-    func getPathsWithPrefix(_ pathPrefix: String) -> [String] {
-        var paths: [String] = []
-
-        dbQueue.sync { [weak self] in
-            guard let self = self else { return }
-
-            var stmt: OpaquePointer?
-            let escapedPrefix = pathPrefix.replacingOccurrences(of: "'", with: "''")
-            let sql = "SELECT path FROM files WHERE path LIKE '\(escapedPrefix)%'"
-
-            if sqlite3_prepare_v2(self.db, sql, -1, &stmt, nil) == SQLITE_OK {
-                while sqlite3_step(stmt) == SQLITE_ROW {
-                    if let pathPtr = sqlite3_column_text(stmt, 0) {
-                        paths.append(String(cString: pathPtr))
-                    }
-                }
-                sqlite3_finalize(stmt)
-            }
-        }
-
-        return paths
     }
 
     /// Load all records from database

@@ -305,6 +305,26 @@ final class MemoryIndex {
 
     /// Build index from database records
     func build(from records: [FileRecord], completion: (() -> Void)? = nil) {
+        var index = 0
+        buildStreamed(
+            chunkLoader: {
+                guard index < records.count else { return nil }
+                let end = min(index + 10_000, records.count)
+                let chunk = Array(records[index..<end])
+                index = end
+                return chunk
+            },
+            completion: completion
+        )
+    }
+
+    /// 流式构建索引：chunkLoader 在索引串行队列上被反复调用，返回 nil 表示结束。
+    /// 启动加载时直接把数据库分批记录灌入，无需先物化全量 FileRecord 数组
+    /// （60 万文件级别可减少一份数百 MB 的峰值内存，且少一次大数组拷贝）。
+    func buildStreamed(
+        chunkLoader: @escaping () -> [FileRecord]?,
+        completion: (() -> Void)? = nil
+    ) {
         queue.async { [weak self] in
             guard let self = self else { return }
 
@@ -318,61 +338,66 @@ final class MemoryIndex {
             self.nameTrie = TrieNode()
             self.pinyinTrie = TrieNode()
 
-            // Reserve capacity
-            self.apps.reserveCapacity(500)
-            self.files.reserveCapacity(records.count)
-            self.directories.reserveCapacity(5000)
-            self.allItems.reserveCapacity(records.count)
-
-            // Build items
-            for record in records {
-                let item = SearchItem(from: record)
-                self.allItems[item.path] = item
-
-                if item.isApp {
-                    self.apps.append(item)
-                } else if item.isDirectory {
-                    self.directories.append(item)
-                } else {
-                    self.files.append(item)
-                }
-
-                // Insert into name trie
-                self.insertIntoTrie(self.nameTrie, key: item.lowerName, item: item)
-
-                // Insert into pinyin trie
-                if let pinyin = item.pinyinFull {
-                    self.insertIntoTrie(self.pinyinTrie, key: pinyin, item: item)
-                }
-                if let acronym = item.pinyinAcronym {
-                    self.insertIntoTrie(self.pinyinTrie, key: acronym, item: item)
+            while let chunk = chunkLoader() {
+                for record in chunk {
+                    self.appendRecordLocked(record)
                 }
             }
 
-            // Sort apps by name length (shorter = more relevant)
-            self.apps.sort { $0.name.count < $1.name.count }
-
-            // Sort directories by modified date (recent first)
-            self.directories.sort { $0.modifiedDate > $1.modifiedDate }
-
-            // Sort files by modified date (recent first)
-            self.files.sort { $0.modifiedDate > $1.modifiedDate }
-
-            // Update statistics
-            self.appsCount = self.apps.count
-            self.filesCount = self.files.count
-            self.directoriesCount = self.directories.count
-            self.totalCount = self.allItems.count
-
-            let duration = Date().timeIntervalSince(startTime)
-            print(
-                "MemoryIndex: Built index with \(self.totalCount) items (\(self.appsCount) apps, \(self.directoriesCount) dirs, \(self.filesCount) files) in \(String(format: "%.3f", duration))s"
-            )
+            self.finalizeBuildLocked(startTime: startTime)
 
             DispatchQueue.main.async {
                 completion?()
             }
         }
+    }
+
+    /// 追加单条记录（必须在 queue 中调用，流式构建使用）
+    private func appendRecordLocked(_ record: FileRecord) {
+        let item = SearchItem(from: record)
+        self.allItems[item.path] = item
+
+        if item.isApp {
+            self.apps.append(item)
+        } else if item.isDirectory {
+            self.directories.append(item)
+        } else {
+            self.files.append(item)
+        }
+
+        // Insert into name trie
+        self.insertIntoTrie(self.nameTrie, key: item.lowerName, item: item)
+
+        // Insert into pinyin trie
+        if let pinyin = item.pinyinFull {
+            self.insertIntoTrie(self.pinyinTrie, key: pinyin, item: item)
+        }
+        if let acronym = item.pinyinAcronym {
+            self.insertIntoTrie(self.pinyinTrie, key: acronym, item: item)
+        }
+    }
+
+    /// 完成构建：排序与统计（必须在 queue 中调用）
+    private func finalizeBuildLocked(startTime: Date) {
+        // Sort apps by name length (shorter = more relevant)
+        self.apps.sort { $0.name.count < $1.name.count }
+
+        // Sort directories by modified date (recent first)
+        self.directories.sort { $0.modifiedDate > $1.modifiedDate }
+
+        // Sort files by modified date (recent first)
+        self.files.sort { $0.modifiedDate > $1.modifiedDate }
+
+        // Update statistics
+        self.appsCount = self.apps.count
+        self.filesCount = self.files.count
+        self.directoriesCount = self.directories.count
+        self.totalCount = self.allItems.count
+
+        let duration = Date().timeIntervalSince(startTime)
+        print(
+            "MemoryIndex: Built index with \(self.totalCount) items (\(self.appsCount) apps, \(self.directoriesCount) dirs, \(self.filesCount) files) in \(String(format: "%.3f", duration))s"
+        )
     }
 
     /// 重建所有 Trie（nameTrie / pinyinTrie），回收 remove 过程中产生的死 TrieNode。
@@ -382,19 +407,7 @@ final class MemoryIndex {
         queue.async { [weak self] in
             guard let self = self else { return }
             let start = Date()
-            self.nameTrie = TrieNode()
-            self.pinyinTrie = TrieNode()
-            for item in self.allItems.values {
-                self.insertIntoTrie(self.nameTrie, key: item.lowerName, item: item)
-                if let pinyin = item.pinyinFull {
-                    self.insertIntoTrie(self.pinyinTrie, key: pinyin, item: item)
-                }
-                if let acronym = item.pinyinAcronym {
-                    self.insertIntoTrie(self.pinyinTrie, key: acronym, item: item)
-                }
-                // 顺便释放文件/应用类懒加载的图标缓存（定期内存回收）
-                item.releaseLazyIcon()
-            }
+            self.rebuildTriesLocked(releaseIcons: true)
             print(
                 "MemoryIndex: Trie rebuilt (\(self.totalCount) items) in "
                 + "\(String(format: "%.3f", Date().timeIntervalSince(start)))s [定期内存回收]"
@@ -402,82 +415,208 @@ final class MemoryIndex {
         }
     }
 
+    /// 重建 Trie 的实际逻辑（必须在 queue 中调用）。
+    /// 大批量删除后也走这里：整体重建比逐条 trieRemove + 修剪更彻底。
+    private func rebuildTriesLocked(releaseIcons: Bool) {
+        nameTrie = TrieNode()
+        pinyinTrie = TrieNode()
+        for item in allItems.values {
+            insertIntoTrie(nameTrie, key: item.lowerName, item: item)
+            if let pinyin = item.pinyinFull {
+                insertIntoTrie(pinyinTrie, key: pinyin, item: item)
+            }
+            if let acronym = item.pinyinAcronym {
+                insertIntoTrie(pinyinTrie, key: acronym, item: item)
+            }
+            if releaseIcons {
+                // 顺便释放文件/应用类懒加载的图标缓存（定期内存回收）
+                item.releaseLazyIcon()
+            }
+        }
+    }
+
     /// Add a single item to index (用于实时更新)
     func add(_ record: FileRecord) {
+        addBatch([record])
+    }
+
+    /// 批量添加（FSEvents 批处理路径）。
+    /// 与逐条 add 相比：apps 只排序一次；files/directories 用归并保持 modifiedDate 降序，
+    /// 避免逐条 insert(at: 0) 对 60 万级数组做 O(n) memmove（git checkout 场景会累积到秒级）。
+    func addBatch(_ records: [FileRecord], completion: (() -> Void)? = nil) {
+        guard !records.isEmpty else {
+            completion.map { DispatchQueue.main.async(execute: $0) }
+            return
+        }
         queue.async { [weak self] in
             guard let self = self else { return }
 
-            let item = SearchItem(from: record)
+            var newFiles: [SearchItem] = []
+            var newDirectories: [SearchItem] = []
+            var addedApps = false
 
-            // 检查是否已存在
-            if self.allItems[item.path] != nil {
-                // 已存在则跳过，不需要重复添加
-                return
+            for record in records {
+                let item = SearchItem(from: record)
+
+                // 检查是否已存在（调用方保证先删后加的顺序，这里兜底跳过）
+                if self.allItems[item.path] != nil { continue }
+
+                self.allItems[item.path] = item
+
+                if item.isApp {
+                    self.apps.append(item)
+                    addedApps = true
+                } else if item.isDirectory {
+                    newDirectories.append(item)
+                } else {
+                    newFiles.append(item)
+                }
+
+                self.insertIntoTrie(self.nameTrie, key: item.lowerName, item: item)
+
+                if let pinyin = item.pinyinFull {
+                    self.insertIntoTrie(self.pinyinTrie, key: pinyin, item: item)
+                }
+                if let acronym = item.pinyinAcronym {
+                    self.insertIntoTrie(self.pinyinTrie, key: acronym, item: item)
+                }
             }
 
-            self.allItems[item.path] = item
-
-            if item.isApp {
-                self.apps.append(item)
+            if addedApps {
                 self.apps.sort { $0.name.count < $1.name.count }
                 self.appsCount = self.apps.count
-            } else if item.isDirectory {
-                self.directories.insert(item, at: 0)  // Insert at beginning (most recent)
+            }
+            if !newDirectories.isEmpty {
+                self.directories = Self.mergeByDateDesc(self.directories, newDirectories)
                 self.directoriesCount = self.directories.count
-            } else {
-                self.files.insert(item, at: 0)  // Insert at beginning (most recent)
+            }
+            if !newFiles.isEmpty {
+                self.files = Self.mergeByDateDesc(self.files, newFiles)
                 self.filesCount = self.files.count
             }
 
-            self.insertIntoTrie(self.nameTrie, key: item.lowerName, item: item)
-
-            if let pinyin = item.pinyinFull {
-                self.insertIntoTrie(self.pinyinTrie, key: pinyin, item: item)
-            }
-            if let acronym = item.pinyinAcronym {
-                self.insertIntoTrie(self.pinyinTrie, key: acronym, item: item)
-            }
-
             self.totalCount = self.allItems.count
+
+            DispatchQueue.main.async {
+                completion?()
+            }
         }
+    }
+
+    /// 合并两个按 modifiedDate 降序的数组（newItems 内部先排序），O(n+m)。
+    private static func mergeByDateDesc(_ existing: [SearchItem], _ newItems: [SearchItem]) -> [SearchItem] {
+        let sorted = newItems.sorted { $0.modifiedDate > $1.modifiedDate }
+
+        var result: [SearchItem] = []
+        result.reserveCapacity(existing.count + sorted.count)
+
+        var i = 0
+        var j = 0
+        while i < existing.count && j < sorted.count {
+            if existing[i].modifiedDate >= sorted[j].modifiedDate {
+                result.append(existing[i])
+                i += 1
+            } else {
+                result.append(sorted[j])
+                j += 1
+            }
+        }
+        result.append(contentsOf: existing[i...])
+        result.append(contentsOf: sorted[j...])
+        return result
     }
 
     /// Remove an item from index
     func remove(path: String) {
+        removeBatch(paths: [path])
+    }
+
+    /// 批量移除。对 apps/files/directories 各做一次遍历过滤，
+    /// 替代逐条 remove 的 O(n) firstIndex 线性扫描（批量删除时是 O(n×m)）。
+    func removeBatch(paths: [String], completion: (() -> Void)? = nil) {
+        guard !paths.isEmpty else {
+            completion.map { DispatchQueue.main.async(execute: $0) }
+            return
+        }
         queue.async { [weak self] in
-            guard let self = self, let item = self.allItems[path] else { return }
+            guard let self = self else { return }
+            let removeSet = Set(paths)
+            self.performRemovalLocked(
+                items: removeSet.compactMap { self.allItems[$0] })
+            DispatchQueue.main.async {
+                completion?()
+            }
+        }
+    }
 
-            self.allItems.removeValue(forKey: path)
+    /// 移除路径本身及其全部子路径记录（目录删除的级联语义）。
+    ///
+    /// Finder「移到废纸篓」、目录重命名 / 移动时，FSEvents 只上报目录本身一条事件
+    /// （子文件 inode 未变不会逐个上报），必须按前缀级联清理，否则子文件会永久残留在索引里。
+    func removeSubtree(atPath path: String, completion: (() -> Void)? = nil) {
+        queue.async { [weak self] in
+            guard let self = self else { return }
 
-            if item.isApp {
-                if let index = self.apps.firstIndex(where: { $0.path == path }) {
-                    self.apps.remove(at: index)
-                }
-                self.appsCount = self.apps.count
-            } else if item.isDirectory {
-                if let index = self.directories.firstIndex(where: { $0.path == path }) {
-                    self.directories.remove(at: index)
-                }
-                self.directoriesCount = self.directories.count
-            } else {
-                if let index = self.files.firstIndex(where: { $0.path == path }) {
-                    self.files.remove(at: index)
-                }
-                self.filesCount = self.files.count
+            let prefix = path.hasSuffix("/") && path.count > 1
+                ? String(path.dropLast()) + "/" : path + "/"
+
+            var items: [SearchItem] = []
+            if let item = self.allItems[path] {
+                items.append(item)
+            }
+            for (key, item) in self.allItems where key.hasPrefix(prefix) {
+                items.append(item)
             }
 
+            self.performRemovalLocked(items: items)
+
+            DispatchQueue.main.async {
+                completion?()
+            }
+        }
+    }
+
+    /// 实际执行移除（必须在 queue 中调用）。
+    /// 删除量大时整体重建 Trie（比逐条 trieRemove 更彻底），否则逐条修剪。
+    private func performRemovalLocked(items: [SearchItem]) {
+        guard !items.isEmpty else { return }
+
+        let removeSet = Set(items.map { $0.path })
+        for path in removeSet {
+            allItems.removeValue(forKey: path)
+        }
+
+        // 单次遍历过滤，替代逐条 firstIndex
+        apps.removeAll { removeSet.contains($0.path) }
+        directories.removeAll { removeSet.contains($0.path) }
+        files.removeAll { removeSet.contains($0.path) }
+
+        if items.count > 2_000 {
+            rebuildTriesLocked(releaseIcons: false)
+        } else {
             // 从 Trie 中移除该 item 的所有 path 条目，并修剪空节点，
             // 避免 Trie 只增不减导致内存膨胀（曾导致 6 天累积 30+GB）。
-            self.trieRemove(self.nameTrie, key: item.lowerName, path: path)
-            if let pinyin = item.pinyinFull {
-                self.trieRemove(self.pinyinTrie, key: pinyin, path: path)
+            for item in items {
+                trieRemove(nameTrie, key: item.lowerName, path: item.path)
+                if let pinyin = item.pinyinFull {
+                    trieRemove(pinyinTrie, key: pinyin, path: item.path)
+                }
+                if let acronym = item.pinyinAcronym {
+                    trieRemove(pinyinTrie, key: acronym, path: item.path)
+                }
             }
-            if let acronym = item.pinyinAcronym {
-                self.trieRemove(self.pinyinTrie, key: acronym, path: path)
-            }
-
-            self.totalCount = self.allItems.count
         }
+
+        appsCount = apps.count
+        filesCount = files.count
+        directoriesCount = directories.count
+        totalCount = allItems.count
+    }
+
+    /// 当前索引的全部路径快照（用于后台存在性审计）。
+    /// 字符串是 CoW，仅复制指针，60 万级也只有几 MB。
+    func allIndexedPaths() -> [String] {
+        return queue.sync { Array(allItems.keys) }
     }
 
     // MARK: - Search
@@ -542,7 +681,7 @@ final class MemoryIndex {
         }
 
         // 2. Use Trie for fast prefix matching (breakthrough for large datasets)
-        let trieCandidates = getTrieCandidates(query: query)
+        let trieCandidates = getTrieCandidates(lowerQuery: lowerQuery, queryIsAscii: queryIsAscii)
 
         // 收集 Trie 匹配项（带类型信息），先收集再按类型排序
         var trieMatches: [SearchItem] = []
@@ -670,10 +809,11 @@ final class MemoryIndex {
         maxResults: Int
     ) {
         // Search apps and tools (small datasets, high priority)
+        // 分两个循环遍历，避免每次按键都拼接新数组
         let currentApps = apps
         let currentTools = tools
 
-        for item in currentApps + currentTools {
+        for item in currentApps {
             guard results.count < maxResults else { break }
             guard seenPaths.insert(item.path).inserted else { continue }
             guard !excludedApps.contains(item.path) else { continue }
@@ -684,6 +824,20 @@ final class MemoryIndex {
                 results.append(item)
             } else if queryIsAscii && item.fuzzyMatchScore(lowerQuery) != nil {
                 // 子序列模糊匹配：输错字母 / 缩写也能命中（仅 apps/tools）
+                results.append(item)
+            }
+        }
+
+        for item in currentTools {
+            guard results.count < maxResults else { break }
+            guard seenPaths.insert(item.path).inserted else { continue }
+            guard !excludedApps.contains(item.path) else { continue }
+
+            if item.matchesQuery(lowerQuery) != nil {
+                results.append(item)
+            } else if queryIsAscii && item.matchesPinyin(lowerQuery) {
+                results.append(item)
+            } else if queryIsAscii && item.fuzzyMatchScore(lowerQuery) != nil {
                 results.append(item)
             }
         }
@@ -758,8 +912,7 @@ final class MemoryIndex {
 
     /// Optimized Trie candidate retrieval - returns paths directly
     /// 高性能获取前缀匹配候选项，直接返回路径集合
-    private func getTrieCandidates(query: String) -> Set<String> {
-        let lowerQuery = query.lowercased()
+    private func getTrieCandidates(lowerQuery: String, queryIsAscii: Bool) -> Set<String> {
         var candidatePaths = Set<String>()
 
         // 从 name trie 获取候选路径
@@ -768,7 +921,7 @@ final class MemoryIndex {
         }
 
         // 从 pinyin trie 获取候选路径（仅 ASCII 查询）
-        if query.allSatisfy({ $0.isASCII }) {
+        if queryIsAscii {
             if let paths = searchTrieForPaths(pinyinTrie, prefix: lowerQuery) {
                 candidatePaths.formUnion(paths)
             }
