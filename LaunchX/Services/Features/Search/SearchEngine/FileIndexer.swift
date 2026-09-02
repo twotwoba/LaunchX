@@ -263,6 +263,20 @@ final class FileIndexer {
     // MARK: - Private Helpers
 
     private func createFileRecord(from url: URL) -> FileRecord? {
+        return Self.makeRecord(for: url)
+    }
+
+    private func createAppRecord(from url: URL) -> FileRecord? {
+        return Self.makeRecord(for: url)
+    }
+
+    // MARK: - Record Building (共享)
+
+    /// 统一构建 FileRecord：名称保留扩展名、app 用本地化显示名并过滤无图标的辅助程序、生成拼音。
+    /// 全量扫描与 FSEvents 实时增量共用此入口，保证两条路径的记录语义一致
+    /// （此前 SearchEngine 侧用 deletingPathExtension 剥掉扩展名、app 不取本地化名，
+    /// 实时新增项与全量扫描项的名称 / 搜索行为不一致）。
+    static func makeRecord(for url: URL) -> FileRecord? {
         let resourceValues = try? url.resourceValues(forKeys: [
             .isDirectoryKey,
             .contentModificationDateKey,
@@ -312,44 +326,83 @@ final class FileIndexer {
         )
     }
 
-    private func createAppRecord(from url: URL) -> FileRecord? {
-        // Filter out apps without custom icons (system services like WiFiAgent, WindowManager)
-        if !appHasCustomIcon(at: url.path) {
-            return nil
+    /// 枚举目录子树生成记录（FSEvents 目录 created 事件后补索引子文件用）。
+    ///
+    /// 目录「移入监控范围 / 从废纸篓恢复 / 粘贴整目录」时 FSEvents 只上报目录本身一条事件，
+    /// 子文件不会再有事件，必须主动补扫。过滤规则与 `scan` 一致
+    /// （排除路径 / 目录名 / 扩展名、隐藏文件、package 内部）。
+    /// 不写数据库、不受 isScanning 守卫限制，可在后台线程调用。
+    ///
+    /// - Returns: 含根目录本身在内的记录数组；根目录被排除规则命中时返回空数组
+    func collectSubtreeRecords(
+        root: URL,
+        excludedPaths: [String] = [],
+        excludedNames: Set<String> = [],
+        excludedExtensions: Set<String> = []
+    ) -> [FileRecord] {
+        let rootPath = root.path
+
+        // 根目录本身命中排除规则则整体跳过
+        let rootName = root.lastPathComponent
+        if rootName.hasPrefix(".") { return [] }
+        if excludedNames.contains(rootName) { return [] }
+        if excludedPaths.contains(where: { rootPath.hasPrefix($0) }) { return [] }
+        let rootExt = root.pathExtension.lowercased()
+        if !rootExt.isEmpty && excludedExtensions.contains(rootExt) { return [] }
+
+        var records: [FileRecord] = []
+        if let rootRecord = Self.makeRecord(for: root) {
+            records.append(rootRecord)
         }
 
-        let resourceValues = try? url.resourceValues(forKeys: [.contentModificationDateKey])
+        guard
+            let enumerator = FileManager.default.enumerator(
+                at: root,
+                includingPropertiesForKeys: [
+                    .isDirectoryKey,
+                    .contentModificationDateKey,
+                    .fileSizeKey,
+                    .isApplicationKey,
+                ],
+                options: [.skipsHiddenFiles, .skipsPackageDescendants]
+            )
+        else { return records }
 
-        // Get localized display name (prefer Chinese localization, fallback to system display name)
-        let name = FileManager.default.getAppDisplayName(at: url.path)
+        while let fileURL = enumerator.nextObject() as? URL {
+            let filePath = fileURL.path
 
-        // Calculate pinyin for Chinese characters
-        var pinyinFull: String? = nil
-        var pinyinAcronym: String? = nil
+            // Check excluded paths
+            if excludedPaths.contains(where: { filePath.hasPrefix($0) }) {
+                enumerator.skipDescendants()
+                continue
+            }
 
-        if name.utf8.count != name.count {
-            pinyinFull = name.pinyin.lowercased().replacingOccurrences(of: " ", with: "")
-            pinyinAcronym = name.pinyinAcronym.lowercased()
+            // Check excluded folder names
+            let fileName = fileURL.lastPathComponent
+            if excludedNames.contains(fileName) {
+                enumerator.skipDescendants()
+                continue
+            }
+
+            // Check excluded extensions
+            let ext = fileURL.pathExtension.lowercased()
+            if !ext.isEmpty && excludedExtensions.contains(ext) {
+                continue
+            }
+
+            if let record = Self.makeRecord(for: fileURL) {
+                records.append(record)
+            }
         }
 
-        return FileRecord(
-            name: name,
-            path: url.path,
-            extension: "app",
-            isApp: true,
-            isDirectory: true,
-            pinyinFull: pinyinFull,
-            pinyinAcronym: pinyinAcronym,
-            modifiedDate: resourceValues?.contentModificationDate,
-            fileSize: 0
-        )
+        return records
     }
 
     // MARK: - Helper Functions
 
     /// Check if an app has a custom icon defined in Info.plist
     /// Apps without icons (like system services in /System/Library/CoreServices/) return false
-    private func appHasCustomIcon(at path: String) -> Bool {
+    private static func appHasCustomIcon(at path: String) -> Bool {
         let appName = (path as NSString).lastPathComponent
 
         // Filter out Electron/Chromium helper processes

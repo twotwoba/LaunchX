@@ -72,9 +72,10 @@ final class SearchEngine: ObservableObject {
 
     // Trie 定期重建（内存回收：Trie 只增不减，定期全量重建回收死节点，曾导致 30+GB 膨胀）
     private var trieRebuildTimer: Timer?
-    private var fsRemovalsSinceTrieRebuild = 0
     private let trieRebuildInterval: TimeInterval = 6 * 3600  // 每 6 小时
-    private let trieRebuildRemovalThreshold = 50_000  // 累计删除达 5 万也触发
+
+    // 失效条目审计（清理 App 未运行期间删除等 FSEvents 覆盖不到的死链）
+    private var staleAuditScheduled = false
 
     // FSEvents 批量处理开关（可通过配置控制）
     private var fsEventsBatchProcessingEnabled: Bool {
@@ -294,7 +295,8 @@ final class SearchEngine: ObservableObject {
     }
 
     /// Optimized batch loading for large datasets (600k+ files)
-    /// 分批加载索引，优化大数据集的启动性能
+    /// 流式加载：数据库分批读取直接灌入内存索引，
+    /// 不再把全量 FileRecord 物化成中间数组（峰值内存约为原来的一半）
     private func loadIndexInBatches(startTime: Date) {
         let batchSize = 10000  // Load 10k records at a time
 
@@ -303,23 +305,20 @@ final class SearchEngine: ObservableObject {
 
             // Get total count first
             let stats = self.database.getStatistics()
-            var allRecords: [FileRecord] = []
-            allRecords.reserveCapacity(stats.totalCount)
+            print("SearchEngine: Streaming \(stats.totalCount) records into memory index...")
 
-            // Load all records in batches
             var offset = 0
-            while offset < stats.totalCount {
+
+            self.memoryIndex.buildStreamed(chunkLoader: {
+                guard offset < stats.totalCount else { return nil }
                 let batch = self.database.loadBatch(offset: offset, limit: batchSize)
-                allRecords.append(contentsOf: batch)
+                if batch.isEmpty { return nil }
                 offset += batch.count
-
-                print("SearchEngine: Loaded \(offset)/\(stats.totalCount) records...")
-            }
-
-            // All records loaded, build memory index
-            print("SearchEngine: Loaded all \(allRecords.count) records, building memory index...")
-
-            self.memoryIndex.build(from: allRecords) { [weak self] in
+                if offset % 50000 == 0 {
+                    print("SearchEngine: Loaded \(offset)/\(stats.totalCount) records...")
+                }
+                return batch
+            }) { [weak self] in
                 guard let self = self else { return }
 
                 Task { @MainActor [weak self] in
@@ -334,6 +333,9 @@ final class SearchEngine: ObservableObject {
                     print(
                         "SearchEngine: Loaded index in \(String(format: "%.3f", self.indexingDuration))s"
                     )
+
+                    // 启动后台审计：清理 App 未运行期间删除等 FSEvents 覆盖不到的失效条目
+                    self.scheduleStaleEntryAudit(delay: 30)
                 }
 
                 // Start file system monitoring
@@ -447,23 +449,32 @@ final class SearchEngine: ObservableObject {
         let validEvents = events.filter { !isInsidePackage(path: $0.path) }
         guard !validEvents.isEmpty else { return }
 
-        // 如果批量处理被禁用，立即处理每个事件
-        guard fsEventsBatchProcessingEnabled else {
-            for event in validEvents {
-                switch event.type {
-                case .created, .modified:
-                    addToIndex(path: event.path)
-                case .deleted:
-                    removeFromIndex(path: event.path)
-                case .renamed:
-                    break
-                }
+        // 汇总为「待删除 / 待新增」两个集合（modified = 删 + 加）
+        var pathsToCreate: Set<String> = []
+        var pathsToDelete: Set<String> = []
+
+        for event in validEvents {
+            switch event.type {
+            case .created:
+                pathsToCreate.insert(event.path)
+            case .deleted:
+                pathsToDelete.insert(event.path)
+            case .modified:
+                pathsToDelete.insert(event.path)
+                pathsToCreate.insert(event.path)
+            case .renamed:
+                break
             }
+        }
+
+        // 如果批量处理被禁用，立即处理
+        guard fsEventsBatchProcessingEnabled else {
+            applyIndexUpdates(deleting: Array(pathsToDelete), creating: Array(pathsToCreate))
             return
         }
 
         // 磁盘写入优化: 批量处理文件系统事件
-        // 收集事件到队列，延迟 500ms 后批量处理，减少数据库事务次数
+        // 收集事件到队列，延迟后批量处理，减少数据库事务次数
         fsEventQueue.append(contentsOf: validEvents)
 
         // 检查队列溢出保护（超过 1000 个事件立即处理）
@@ -487,26 +498,26 @@ final class SearchEngine: ObservableObject {
     ///
     /// ## 原理
     /// 文件系统事件（FSEvents）通常会在短时间内产生大量事件。
-    /// 通过收集事件到队列，延迟 500ms 后批量处理，可以：
+    /// 通过收集事件到队列，延迟后批量处理，可以：
     /// 1. 合并重复事件（同一文件的多次修改）
     /// 2. 使用数据库事务批量插入/删除，减少事务开销
     /// 3. 减少数据库 checkpoint 频率
     ///
     /// ## 优化策略
     /// 1. **事件收集**：将 FSEvents 收集到队列，不立即处理
-    /// 2. **延迟处理**：500ms 后批量处理队列中的所有事件
+    /// 2. **延迟处理**：300ms 后批量处理队列中的所有事件
     /// 3. **溢出保护**：队列超过 1000 个事件时立即处理，防止内存溢出
     /// 4. **事务优化**：使用单个数据库事务处理所有事件
     ///
     /// ## 优化效果
-    /// - 减少数据库写入次数：从每个事件一次写入，降低到每 500ms 一次批量写入
+    /// - 减少数据库写入次数：从每个事件一次写入，降低到每批一次批量写入
     /// - 降低 WAL checkpoint 频率：批量写入减少事务数量
     /// - 预期效果：索引相关写入量降低 70-80%
     ///
     /// ## 权衡
-    /// - **索引延迟**：文件变化最多延迟 500ms 才会反映到索引
-    /// - **用户影响**：用户创建文件后，可能需要等待 500ms 才能搜索到
-    /// - **可接受性**：500ms 延迟对大多数用户来说是可接受的
+    /// - **索引延迟**：文件变化最多延迟约 1.3s 才会反映到索引
+    /// - **用户影响**：用户创建文件后，可能需要等待约 1.3s 才能搜索到
+    /// - **可接受性**：秒级延迟对大多数用户来说是可接受的
     ///
     /// ## 配置
     /// 可通过 `DiskWriteOptimizationSettings.fsEventsBatchProcessingEnabled` 开关控制
@@ -516,66 +527,21 @@ final class SearchEngine: ObservableObject {
 
         print("SearchEngine: Processing \(fsEventQueue.count) FSEvents in batch")
 
-        // 分离路径列表
-        var pathsToAdd: [String] = []
-        var pathsToRemove: [String] = []
+        // 汇总为「待删除 / 待新增」两个集合（modified = 删 + 加）
+        var pathsToCreate: Set<String> = []
+        var pathsToDelete: Set<String> = []
 
         for event in fsEventQueue {
             switch event.type {
             case .created:
-                pathsToAdd.append(event.path)
+                pathsToCreate.insert(event.path)
             case .deleted:
-                pathsToRemove.append(event.path)
+                pathsToDelete.insert(event.path)
             case .modified:
-                // 对于修改，先删除再添加
-                pathsToRemove.append(event.path)
-                pathsToAdd.append(event.path)
+                pathsToDelete.insert(event.path)
+                pathsToCreate.insert(event.path)
             case .renamed:
-                // 重命名作为创建/删除处理
                 break
-            }
-        }
-
-        // 批量删除（使用单个事务）
-        if !pathsToRemove.isEmpty {
-            database.deleteBatch(pathsToRemove) { success in
-                if success {
-                    for path in pathsToRemove {
-                        self.memoryIndex.remove(path: path)
-                    }
-                    self.fsRemovalsSinceTrieRebuild += pathsToRemove.count
-                    print("SearchEngine: Batch removed \(pathsToRemove.count) paths")
-                    // 累计删除达阈值，触发 Trie 全量重建回收内存（开发机文件频繁进出时尤其重要）
-                    if self.fsRemovalsSinceTrieRebuild >= self.trieRebuildRemovalThreshold {
-                        self.fsRemovalsSinceTrieRebuild = 0
-                        self.memoryIndex.rebuildTries()
-                        print("SearchEngine: 累计删除达阈值，触发 Trie 重建回收内存")
-                    }
-                }
-            }
-        }
-
-        // 批量添加（收集记录后单个事务插入）
-        if !pathsToAdd.isEmpty {
-            var recordsToAdd: [FileRecord] = []
-            recordsToAdd.reserveCapacity(pathsToAdd.count)
-
-            for path in pathsToAdd {
-                if let record = createFileRecord(path: path) {
-                    recordsToAdd.append(record)
-                }
-            }
-
-            // 批量插入（单个事务）
-            if !recordsToAdd.isEmpty {
-                database.insertBatch(recordsToAdd) { success in
-                    if success {
-                        for record in recordsToAdd {
-                            self.memoryIndex.add(record)
-                        }
-                        print("SearchEngine: Batch inserted \(recordsToAdd.count) records")
-                    }
-                }
             }
         }
 
@@ -585,6 +551,87 @@ final class SearchEngine: ObservableObject {
 
         // 批量处理完成后，检查是否需要执行 checkpoint（磁盘写入优化）
         checkAndForceCheckpoint()
+
+        applyIndexUpdates(deleting: Array(pathsToDelete), creating: Array(pathsToCreate))
+    }
+
+    /// 应用索引增量（FSEvents 事件的统一处理入口）。
+    ///
+    /// - 删除走级联子树：Finder「移到废纸篓」、目录重命名 / 移动时 FSEvents 只上报目录本身，
+    ///   子文件不会再有事件，必须按前缀一并清理（否则子文件永久残留在索引中）。
+    /// - 新增目录补扫子树：目录移入监控范围 / 从废纸篓恢复 / 粘贴整目录时同样只有目录本身的事件，
+    ///   子文件需要主动枚举入索引。
+    /// - 先删后增，全部在后台线程执行；结束后清除搜索缓存并刷新统计。
+    private func applyIndexUpdates(deleting: [String], creating: [String]) {
+        let deleteRoots = Self.prefixCompress(deleting)
+        guard !deleteRoots.isEmpty || !creating.isEmpty else { return }
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+
+            // 1. 级联删除（SQLite 范围删除 + 内存子树移除；dbQueue 与索引队列都是串行的，
+            //    删除操作先入队，保证后续新增的「先删后加」顺序）
+            for root in deleteRoots {
+                self.database.deleteSubtree(atPath: root)
+                self.memoryIndex.removeSubtree(atPath: root)
+            }
+            if !deleteRoots.isEmpty {
+                print("SearchEngine: Cascade removed \(deleteRoots.count) subtree root(s)")
+            }
+
+            // 2. 新增：目录补扫子树，文件单条
+            if !creating.isEmpty {
+                let config = self.searchConfig
+                var records: [FileRecord] = []
+                records.reserveCapacity(creating.count)
+
+                for path in creating {
+                    guard let record = self.createFileRecord(path: path, config: config) else {
+                        continue
+                    }
+                    records.append(record)
+
+                    // 目录 created 只上报目录本身，子文件没有事件，需要主动补扫
+                    // （package 本身如 XXX.app 不展开，与全量扫描的 skipsPackageDescendants 对齐）
+                    if record.isDirectory && !Self.isPackageBundle(path: path) {
+                        records.append(
+                            contentsOf: self.indexer.collectSubtreeRecords(
+                                root: URL(fileURLWithPath: path),
+                                excludedPaths: config.excludedPaths,
+                                excludedNames: Set(config.excludedFolderNames),
+                                excludedExtensions: Set(config.excludedExtensions)
+                            ))
+                    }
+                }
+
+                if !records.isEmpty {
+                    self.database.insertBatch(records)
+                    self.memoryIndex.addBatch(records)
+                    print("SearchEngine: Batch inserted \(records.count) records")
+                }
+            }
+
+            // 3. 索引内容已变化，清除搜索缓存，避免继续返回已删除的文件
+            self.searchCache.clear()
+
+            Task { @MainActor [weak self] in
+                self?.refreshStatsFromMemoryIndex()
+            }
+        }
+    }
+
+    /// 前缀压缩：排序后仅保留互不为子路径的根（"/a/b" 吸收 "/a/b/c"）。
+    /// rm -rf 会逐个上报子文件删除事件，压缩后变成一条子树级联删除。
+    private static func prefixCompress(_ paths: [String]) -> [String] {
+        guard !paths.isEmpty else { return [] }
+        var roots: [String] = []
+        for path in paths.sorted() {
+            if let last = roots.last, path == last || path.hasPrefix(last + "/") {
+                continue
+            }
+            roots.append(path)
+        }
+        return roots
     }
 
     /// 已知的 macOS bundle / package 扩展名。
@@ -624,144 +671,52 @@ final class SearchEngine: ObservableObject {
         return false
     }
 
-    /// 创建文件记录（辅助方法）
-    private func createFileRecord(path: String) -> FileRecord? {
+    /// 判断路径本身是否是 package（app / framework 等 bundle）。
+    /// 目录 created 事件命中 bundle 时不展开子树（bundle 内部文件不是用户要搜的条目），
+    /// 与全量扫描的 .skipsPackageDescendants 行为对齐。
+    private static func isPackageBundle(path: String) -> Bool {
+        let ext = (path as NSString).pathExtension.lowercased()
+        return !ext.isEmpty && packageExtensions.contains(ext)
+    }
+
+    /// 创建文件记录（FSEvents 实时增量的入口）。
+    /// 排除规则做全路径段检查；记录语义统一走 FileIndexer.makeRecord
+    /// （保留扩展名、app 本地化名 + 无图标辅助程序过滤、拼音）。
+    private func createFileRecord(path: String, config: SearchConfig) -> FileRecord? {
         let url = URL(fileURLWithPath: path)
 
         // Skip if excluded
-        let config = searchConfig
         if config.excludedPaths.contains(where: { path.hasPrefix($0) }) { return nil }
 
-        let fileName = url.lastPathComponent
-        if config.excludedFolderNames.contains(fileName) { return nil }
+        // 检查路径中每一段目录名（此前只查最后一段，
+        // 新建于 node_modules 等排除目录下的文件会漏进索引）
+        if !config.excludedFolderNames.isEmpty {
+            let components = (path as NSString).pathComponents
+            if !Set(config.excludedFolderNames).isDisjoint(with: components) { return nil }
+        }
 
         let ext = url.pathExtension.lowercased()
         if !ext.isEmpty && config.excludedExtensions.contains(ext) { return nil }
 
-        // Create record
-        guard
-            let resourceValues = try? url.resourceValues(forKeys: [
-                .isDirectoryKey, .contentModificationDateKey,
-            ])
-        else { return nil }
-
-        let name = url.deletingPathExtension().lastPathComponent
-        let isApp = ext == "app"
-        let isDir = resourceValues.isDirectory ?? false
-
-        var pinyinFull: String? = nil
-        var pinyinAcronym: String? = nil
-        if name.utf8.count != name.count {
-            pinyinFull = name.pinyin.lowercased().replacingOccurrences(of: " ", with: "")
-            pinyinAcronym = name.pinyinAcronym.lowercased()
-        }
-
-        let record = FileRecord(
-            name: name,
-            path: path,
-            extension: ext,
-            isApp: isApp,
-            isDirectory: isDir,
-            pinyinFull: pinyinFull,
-            pinyinAcronym: pinyinAcronym,
-            modifiedDate: resourceValues.contentModificationDate
-        )
-
-        return record
-    }
-
-    private func handleFSEvents_immediate(_ events: [FSEventsMonitor.FSEvent]) {
-        for event in events {
-            switch event.type {
-            case .created:
-                addToIndex(path: event.path)
-            case .deleted:
-                removeFromIndex(path: event.path)
-            case .modified:
-                // For modifications, we could update metadata
-                // For now, just re-add
-                removeFromIndex(path: event.path)
-                addToIndex(path: event.path)
-            case .renamed:
-                // Handled as create/delete
-                break
-            }
-        }
-    }
-
-    private func addToIndex(path: String) {
-        let url = URL(fileURLWithPath: path)
-
-        // Skip if excluded
-        let config = searchConfig
-        if config.excludedPaths.contains(where: { path.hasPrefix($0) }) { return }
-
-        let fileName = url.lastPathComponent
-        if config.excludedFolderNames.contains(fileName) { return }
-
-        let ext = url.pathExtension.lowercased()
-        if !ext.isEmpty && config.excludedExtensions.contains(ext) { return }
-
-        // Create record
-        guard
-            let resourceValues = try? url.resourceValues(forKeys: [
-                .isDirectoryKey, .contentModificationDateKey,
-            ])
-        else { return }
-
-        let name = url.deletingPathExtension().lastPathComponent
-        let isApp = ext == "app"
-        let isDir = resourceValues.isDirectory ?? false
-
-        var pinyinFull: String? = nil
-        var pinyinAcronym: String? = nil
-        if name.utf8.count != name.count {
-            pinyinFull = name.pinyin.lowercased().replacingOccurrences(of: " ", with: "")
-            pinyinAcronym = name.pinyinAcronym.lowercased()
-        }
-
-        let record = FileRecord(
-            name: name,
-            path: path,
-            extension: ext,
-            isApp: isApp,
-            isDirectory: isDir,
-            pinyinFull: pinyinFull,
-            pinyinAcronym: pinyinAcronym,
-            modifiedDate: resourceValues.contentModificationDate
-        )
-
-        database.insert(record)
-        memoryIndex.add(record)
-
-        Task { @MainActor [weak self] in
-            guard let self = self else { return }
-            self.totalCount = self.memoryIndex.totalCount
-            if isApp {
-                self.appsCount = self.memoryIndex.appsCount
-            } else {
-                self.filesCount = self.memoryIndex.filesCount
-            }
-        }
+        return FileIndexer.makeRecord(for: url)
     }
 
     private func removeFromIndex(path: String) {
-        database.delete(path: path)
-        memoryIndex.remove(path: path)
-
-        Task { @MainActor [weak self] in
-            guard let self = self else { return }
-            self.totalCount = self.memoryIndex.totalCount
-            self.appsCount = self.memoryIndex.appsCount
-            self.filesCount = self.memoryIndex.filesCount
-        }
+        applyIndexUpdates(deleting: [path], creating: [])
     }
 
-    /// 从索引中删除指定路径的文件（公开方法，用于文件被删除后更新索引）
+    /// 从索引中删除指定路径的文件（公开方法，用于文件被删除后更新索引）。
+    /// 走级联子树删除：通过快捷操作删除整个文件夹时，子文件一并清理。
     func removeItem(at path: String) {
         removeFromIndex(path: path)
-        // 同时清除可能包含该路径的缓存
-        searchCache.clear()
+    }
+
+    /// 从 MemoryIndex 刷新对外暴露的统计（主线程调用）
+    @MainActor
+    private func refreshStatsFromMemoryIndex() {
+        totalCount = memoryIndex.totalCount
+        appsCount = memoryIndex.appsCount
+        filesCount = memoryIndex.filesCount
     }
 
     // MARK: - WAL Checkpoint 管理
@@ -779,10 +734,91 @@ final class SearchEngine: ObservableObject {
     }
 
     /// 启动 Trie 定期重建定时器（内存回收）。
-    /// MemoryIndex.remove 已会修剪 Trie，但仍可能残留碎片；定期全量重建可彻底回收死 TrieNode。
+    /// MemoryIndex 移除时已会修剪 Trie，但仍可能残留碎片；定期全量重建可彻底回收死 TrieNode。
+    /// 同时顺带触发一次失效条目审计。
     private func startTrieRebuildTimer() {
         trieRebuildTimer = Timer.scheduledTimer(withTimeInterval: trieRebuildInterval, repeats: true) { [weak self] _ in
             self?.memoryIndex.rebuildTries()
+            Task { @MainActor [weak self] in
+                self?.scheduleStaleEntryAudit(delay: 0)
+            }
+        }
+    }
+
+    // MARK: - 失效条目审计
+
+    /// 调度后台审计（主线程调用）。已在调度中或正在全量索引时跳过。
+    @MainActor
+    private func scheduleStaleEntryAudit(delay: TimeInterval) {
+        guard !staleAuditScheduled, !isIndexing else { return }
+        staleAuditScheduled = true
+
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + delay) { [weak self] in
+            self?.runStaleEntryAudit()
+        }
+    }
+
+    /// 校验索引中的路径是否仍存在于磁盘，清理失效条目。
+    ///
+    /// 覆盖 FSEvents 覆盖不到的场景：
+    /// - App 未运行期间删除 / 移动的文件（FSEvents 只能感知运行期间的事件）
+    /// - 事件被合并 / 丢弃（如监控启动前的 5 秒空窗）
+    ///
+    /// 在 utility QoS 上分块执行并节流，避免与用户操作抢 I/O；
+    /// 失效路径经前缀压缩后按子树级联删除（目录被删时其下所有子路径一并清理）。
+    private func runStaleEntryAudit() {
+        let startTime = Date()
+        let allPaths = memoryIndex.allIndexedPaths()
+
+        defer {
+            DispatchQueue.main.async { [weak self] in
+                self?.staleAuditScheduled = false
+            }
+        }
+
+        guard !allPaths.isEmpty else { return }
+
+        print("SearchEngine: Auditing \(allPaths.count) indexed paths for stale entries...")
+
+        let fileManager = FileManager.default
+        var stalePaths: [String] = []
+
+        for (index, path) in allPaths.enumerated() {
+            if !fileManager.fileExists(atPath: path) {
+                stalePaths.append(path)
+            }
+            // 分块节流，避免一次性打满磁盘 I/O
+            if index % 4096 == 4095 {
+                Thread.sleep(forTimeInterval: 0.05)
+            }
+        }
+
+        let roots = Self.prefixCompress(stalePaths)
+        let duration = Date().timeIntervalSince(startTime)
+
+        guard !roots.isEmpty else {
+            print(
+                "SearchEngine: Audit complete, no stale entries (\(String(format: "%.2f", duration))s)"
+            )
+            return
+        }
+
+        print(
+            "SearchEngine: Audit found \(stalePaths.count) stale entries (compressed to \(roots.count) roots), purging..."
+        )
+
+        for root in roots {
+            database.deleteSubtree(atPath: root)
+            memoryIndex.removeSubtree(atPath: root)
+        }
+
+        searchCache.clear()
+
+        Task { @MainActor [weak self] in
+            self?.refreshStatsFromMemoryIndex()
+            print(
+                "SearchEngine: Audit purged \(stalePaths.count) stale entries in \(String(format: "%.2f", duration))s"
+            )
         }
     }
 
