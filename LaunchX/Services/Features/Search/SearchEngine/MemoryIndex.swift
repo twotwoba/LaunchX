@@ -2,17 +2,14 @@ import Cocoa
 import Foundation
 
 /// High-performance in-memory search index
-/// Provides O(1) prefix matching using Trie data structure
+/// - 前缀检索：名称/拼音有序数组 + 二分范围扫描，O(log n + 命中数)。
+///   （替代旧 Trie——旧结构为换 O(1) 前缀检索在 key 经过的每个节点都存「全量路径 Set」，
+///   60 万级索引需要数百万节点 × 每节点数百字节，内存 GB 级；有序数组每项只占 8 字节引用）
+/// - contains 检索：bigram 倒排索引全量召回（替代只扫最近 200 个文件的线性扫描）
+/// - 删除：主表即时过滤；前缀数组 / 倒排懒删除（候选验证时按身份过滤），定期紧凑重建
 final class MemoryIndex {
 
     // MARK: - Data Structures
-
-    /// Optimized Trie node for prefix matching
-    private class TrieNode {
-        var children: [Character: TrieNode] = [:]
-        var itemPaths: Set<String> = []  // Only store paths, not full items
-        var isEndOfWord = false
-    }
 
     /// Indexed search item (lightweight, stored in memory)
     final class SearchItem {
@@ -285,12 +282,19 @@ final class MemoryIndex {
     private var tools: [SearchItem] = []  // 工具项目（网页直达等非文件系统项目）
     private var allItems: [String: SearchItem] = [:]  // path -> item for O(1) lookup
 
-    private var nameTrie = TrieNode()
-    private var pinyinTrie = TrieNode()
+    // 前缀检索有序数组（按各自 key 升序，二分定位前缀范围）
+    private var nameSorted: [SearchItem] = []  // 全部索引项，按 lowerName
+    private var pinyinFullSorted: [SearchItem] = []  // 仅有拼音的项，按 pinyinFull
+    private var pinyinAcronymSorted: [SearchItem] = []  // 仅有拼音的项，按 pinyinAcronym
+
+    // bigram 倒排索引：名称相邻字符对 -> 文件/目录项，contains 全量召回
+    private var bigramIndex: [String: [SearchItem]] = [:]
+
+    // 懒删除累计的陈旧条目数（前缀数组/倒排中已移出 allItems 的引用），达阈值紧凑重建
+    private var staleIndexEntries = 0
 
     // 别名支持
     private var aliasMap: [String: String] = [:]  // alias (lowercase) -> path
-    private var aliasTrie = TrieNode()
 
     // 串行队列保证线程安全，所有数据访问都通过这个队列
     private let queue = DispatchQueue(label: "com.launchx.memoryindex", qos: .userInteractive)
@@ -335,8 +339,11 @@ final class MemoryIndex {
             self.files.removeAll()
             self.directories.removeAll()
             self.allItems.removeAll()
-            self.nameTrie = TrieNode()
-            self.pinyinTrie = TrieNode()
+            self.nameSorted.removeAll()
+            self.pinyinFullSorted.removeAll()
+            self.pinyinAcronymSorted.removeAll()
+            self.bigramIndex.removeAll()
+            self.staleIndexEntries = 0
 
             while let chunk = chunkLoader() {
                 for record in chunk {
@@ -365,16 +372,15 @@ final class MemoryIndex {
             self.files.append(item)
         }
 
-        // Insert into name trie
-        self.insertIntoTrie(self.nameTrie, key: item.lowerName, item: item)
-
-        // Insert into pinyin trie
-        if let pinyin = item.pinyinFull {
-            self.insertIntoTrie(self.pinyinTrie, key: pinyin, item: item)
+        // 前缀有序数组与 bigram 倒排：构建期无序追加，finalize 时统一排序
+        self.nameSorted.append(item)
+        if item.pinyinFull != nil {
+            self.pinyinFullSorted.append(item)
         }
-        if let acronym = item.pinyinAcronym {
-            self.insertIntoTrie(self.pinyinTrie, key: acronym, item: item)
+        if item.pinyinAcronym != nil {
+            self.pinyinAcronymSorted.append(item)
         }
+        self.indexBigramsLocked(item)
     }
 
     /// 完成构建：排序与统计（必须在 queue 中调用）
@@ -388,6 +394,11 @@ final class MemoryIndex {
         // Sort files by modified date (recent first)
         self.files.sort { $0.modifiedDate > $1.modifiedDate }
 
+        // 前缀检索数组排序（bigram 倒排在追加时已建好，无需处理）
+        self.nameSorted.sort { $0.lowerName < $1.lowerName }
+        self.pinyinFullSorted.sort { ($0.pinyinFull ?? "") < ($1.pinyinFull ?? "") }
+        self.pinyinAcronymSorted.sort { ($0.pinyinAcronym ?? "") < ($1.pinyinAcronym ?? "") }
+
         // Update statistics
         self.appsCount = self.apps.count
         self.filesCount = self.files.count
@@ -400,39 +411,41 @@ final class MemoryIndex {
         )
     }
 
-    /// 重建所有 Trie（nameTrie / pinyinTrie），回收 remove 过程中产生的死 TrieNode。
-    /// 不动 allItems / apps / files / directories（它们没有泄漏），仅重建只增不减的 Trie。
-    /// 供 SearchEngine 定期调用做内存回收。
-    func rebuildTries() {
+    /// 紧凑重建前缀有序数组与 bigram 倒排，回收懒删除残留的陈旧条目。
+    /// 不动 allItems / apps / files / directories（它们是即时更新的）。
+    /// 供 SearchEngine 定期调用做内存回收；顺带释放懒加载图标。
+    func rebuildIndexes() {
         queue.async { [weak self] in
             guard let self = self else { return }
             let start = Date()
-            self.rebuildTriesLocked(releaseIcons: true)
+            self.rebuildIndexesLocked(releaseIcons: true)
             print(
-                "MemoryIndex: Trie rebuilt (\(self.totalCount) items) in "
+                "MemoryIndex: Indexes rebuilt (\(self.totalCount) items) in "
                 + "\(String(format: "%.3f", Date().timeIntervalSince(start)))s [定期内存回收]"
             )
         }
     }
 
-    /// 重建 Trie 的实际逻辑（必须在 queue 中调用）。
-    /// 大批量删除后也走这里：整体重建比逐条 trieRemove + 修剪更彻底。
-    private func rebuildTriesLocked(releaseIcons: Bool) {
-        nameTrie = TrieNode()
-        pinyinTrie = TrieNode()
+    /// 紧凑重建的实际逻辑（必须在 queue 中调用）。
+    /// 大批量删除累计陈旧条目超阈值时也会走这里。
+    private func rebuildIndexesLocked(releaseIcons: Bool) {
+        nameSorted = allItems.values.sorted { $0.lowerName < $1.lowerName }
+        pinyinFullSorted = allItems.values
+            .filter { $0.pinyinFull != nil }
+            .sorted { ($0.pinyinFull ?? "") < ($1.pinyinFull ?? "") }
+        pinyinAcronymSorted = allItems.values
+            .filter { $0.pinyinAcronym != nil }
+            .sorted { ($0.pinyinAcronym ?? "") < ($1.pinyinAcronym ?? "") }
+
+        bigramIndex.removeAll()
         for item in allItems.values {
-            insertIntoTrie(nameTrie, key: item.lowerName, item: item)
-            if let pinyin = item.pinyinFull {
-                insertIntoTrie(pinyinTrie, key: pinyin, item: item)
-            }
-            if let acronym = item.pinyinAcronym {
-                insertIntoTrie(pinyinTrie, key: acronym, item: item)
-            }
+            indexBigramsLocked(item)
             if releaseIcons {
                 // 顺便释放文件/应用类懒加载的图标缓存（定期内存回收）
                 item.releaseLazyIcon()
             }
         }
+        staleIndexEntries = 0
     }
 
     /// Add a single item to index (用于实时更新)
@@ -453,6 +466,7 @@ final class MemoryIndex {
 
             var newFiles: [SearchItem] = []
             var newDirectories: [SearchItem] = []
+            var newItems: [SearchItem] = []  // 本次实际新增（用于归并进前缀有序数组）
             var addedApps = false
 
             for record in records {
@@ -462,6 +476,7 @@ final class MemoryIndex {
                 if self.allItems[item.path] != nil { continue }
 
                 self.allItems[item.path] = item
+                newItems.append(item)
 
                 if item.isApp {
                     self.apps.append(item)
@@ -472,14 +487,7 @@ final class MemoryIndex {
                     newFiles.append(item)
                 }
 
-                self.insertIntoTrie(self.nameTrie, key: item.lowerName, item: item)
-
-                if let pinyin = item.pinyinFull {
-                    self.insertIntoTrie(self.pinyinTrie, key: pinyin, item: item)
-                }
-                if let acronym = item.pinyinAcronym {
-                    self.insertIntoTrie(self.pinyinTrie, key: acronym, item: item)
-                }
+                self.indexBigramsLocked(item)
             }
 
             if addedApps {
@@ -493,6 +501,22 @@ final class MemoryIndex {
             if !newFiles.isEmpty {
                 self.files = Self.mergeByDateDesc(self.files, newFiles)
                 self.filesCount = self.files.count
+            }
+
+            // 归并进前缀有序数组，保持二分检索要求的有序性
+            if !newItems.isEmpty {
+                self.nameSorted = Self.mergeSortedByKey(
+                    self.nameSorted, newItems, key: { $0.lowerName })
+                let newPinyinFull = newItems.filter { $0.pinyinFull != nil }
+                if !newPinyinFull.isEmpty {
+                    self.pinyinFullSorted = Self.mergeSortedByKey(
+                        self.pinyinFullSorted, newPinyinFull, key: { $0.pinyinFull ?? "" })
+                }
+                let newAcronym = newItems.filter { $0.pinyinAcronym != nil }
+                if !newAcronym.isEmpty {
+                    self.pinyinAcronymSorted = Self.mergeSortedByKey(
+                        self.pinyinAcronymSorted, newAcronym, key: { $0.pinyinAcronym ?? "" })
+                }
             }
 
             self.totalCount = self.allItems.count
@@ -514,6 +538,34 @@ final class MemoryIndex {
         var j = 0
         while i < existing.count && j < sorted.count {
             if existing[i].modifiedDate >= sorted[j].modifiedDate {
+                result.append(existing[i])
+                i += 1
+            } else {
+                result.append(sorted[j])
+                j += 1
+            }
+        }
+        result.append(contentsOf: existing[i...])
+        result.append(contentsOf: sorted[j...])
+        return result
+    }
+
+    /// 把新增条目按 key 归并进已升序数组（newItems 内部先排序），O(n+m)。
+    /// 与 mergeByDateDesc 同思路：避免逐条二分插入对 60 万级数组做 O(n) memmove。
+    private static func mergeSortedByKey(
+        _ existing: [SearchItem],
+        _ newItems: [SearchItem],
+        key: (SearchItem) -> String
+    ) -> [SearchItem] {
+        let sorted = newItems.sorted { key($0) < key($1) }
+
+        var result: [SearchItem] = []
+        result.reserveCapacity(existing.count + sorted.count)
+
+        var i = 0
+        var j = 0
+        while i < existing.count && j < sorted.count {
+            if key(existing[i]) <= key(sorted[j]) {
                 result.append(existing[i])
                 i += 1
             } else {
@@ -577,7 +629,10 @@ final class MemoryIndex {
     }
 
     /// 实际执行移除（必须在 queue 中调用）。
-    /// 删除量大时整体重建 Trie（比逐条 trieRemove 更彻底），否则逐条修剪。
+    /// 主表（allItems/apps/files/directories）即时过滤；
+    /// 前缀有序数组与 bigram 倒排采用懒删除——先保留陈旧引用，
+    /// 检索时用 allItems 身份校验过滤，累计超阈值再整体紧凑重建。
+    /// （旧 Trie 需逐条修剪节点避免只增不减，曾导致 6 天累积 30+GB；现在删除是 O(1)）
     private func performRemovalLocked(items: [SearchItem]) {
         guard !items.isEmpty else { return }
 
@@ -591,20 +646,9 @@ final class MemoryIndex {
         directories.removeAll { removeSet.contains($0.path) }
         files.removeAll { removeSet.contains($0.path) }
 
-        if items.count > 2_000 {
-            rebuildTriesLocked(releaseIcons: false)
-        } else {
-            // 从 Trie 中移除该 item 的所有 path 条目，并修剪空节点，
-            // 避免 Trie 只增不减导致内存膨胀（曾导致 6 天累积 30+GB）。
-            for item in items {
-                trieRemove(nameTrie, key: item.lowerName, path: item.path)
-                if let pinyin = item.pinyinFull {
-                    trieRemove(pinyinTrie, key: pinyin, path: item.path)
-                }
-                if let acronym = item.pinyinAcronym {
-                    trieRemove(pinyinTrie, key: acronym, path: item.path)
-                }
-            }
+        staleIndexEntries += items.count
+        if staleIndexEntries > 50_000 {
+            rebuildIndexesLocked(releaseIcons: false)
         }
 
         appsCount = apps.count
@@ -622,7 +666,7 @@ final class MemoryIndex {
     // MARK: - Search
 
     /// Optimized synchronous search - sub-5ms for 600k files
-    /// 高性能搜索：使用Trie前缀匹配 + 限制线性扫描范围
+    /// 高性能搜索：有序数组二分前缀检索 + bigram 倒排 contains 全量召回
     func search(
         query: String,
         excludedApps: Set<String> = [],
@@ -680,44 +724,38 @@ final class MemoryIndex {
             return Array(results.prefix(maxResults))
         }
 
-        // 2. Use Trie for fast prefix matching (breakthrough for large datasets)
-        let trieCandidates = getTrieCandidates(lowerQuery: lowerQuery, queryIsAscii: queryIsAscii)
+        // 2. 前缀检索：有序数组二分定位前缀范围（name + pinyin），O(log n + 命中数)
+        var prefixMatches: [SearchItem] = []
+        prefixMatches.reserveCapacity(maxResults)
 
-        // 收集 Trie 匹配项（带类型信息），先收集再按类型排序
-        var trieMatches: [SearchItem] = []
-        trieMatches.reserveCapacity(min(trieCandidates.count, maxResults))
+        collectPrefixMatches(
+            from: nameSorted, key: { $0.lowerName },
+            lowerQuery: lowerQuery, queryIsAscii: queryIsAscii,
+            excludedApps: excludedApps, excludedPaths: excludedPaths,
+            excludedExtensions: excludedExtensions, excludedFolderNames: excludedFolderNames,
+            into: &prefixMatches, seenPaths: &seenPaths)
 
-        for path in trieCandidates {
-            guard let item = allItems[path] else { continue }
-            guard !seenPaths.contains(path) else { continue }
-
-            // Apply exclusions early to avoid unnecessary processing
-            if excludedApps.contains(path) { continue }
-            if excludedPaths.contains(where: { path.hasPrefix($0) }) { continue }
-
-            if !excludedExtensions.isEmpty {
-                let ext = (path as NSString).pathExtension.lowercased()
-                if excludedExtensions.contains(ext) { continue }
-            }
-
-            if !excludedFolderNames.isEmpty {
-                let components = path.components(separatedBy: "/")
-                if !excludedFolderNames.isDisjoint(with: components) { continue }
-            }
-
-            // Check actual match
-            if item.matchesQuery(lowerQuery) != nil {
-                trieMatches.append(item)
-            } else if queryIsAscii && item.matchesPinyin(lowerQuery) {
-                trieMatches.append(item)
-            }
+        // 拼音前缀仅对 ASCII 查询有意义（拼音 key 本身是 ASCII）
+        if queryIsAscii {
+            collectPrefixMatches(
+                from: pinyinFullSorted, key: { $0.pinyinFull ?? "" },
+                lowerQuery: lowerQuery, queryIsAscii: queryIsAscii,
+                excludedApps: excludedApps, excludedPaths: excludedPaths,
+                excludedExtensions: excludedExtensions, excludedFolderNames: excludedFolderNames,
+                into: &prefixMatches, seenPaths: &seenPaths)
+            collectPrefixMatches(
+                from: pinyinAcronymSorted, key: { $0.pinyinAcronym ?? "" },
+                lowerQuery: lowerQuery, queryIsAscii: queryIsAscii,
+                excludedApps: excludedApps, excludedPaths: excludedPaths,
+                excludedExtensions: excludedExtensions, excludedFolderNames: excludedFolderNames,
+                into: &prefixMatches, seenPaths: &seenPaths)
         }
 
         // 按类型优先级排序：系统命令 > 实用工具 > 应用 > 网页直达 > 目录 > 文件
-        trieMatches.sort { $0.typePriority < $1.typePriority }
+        prefixMatches.sort { $0.typePriority < $1.typePriority }
 
         // 加入结果
-        for item in trieMatches {
+        for item in prefixMatches {
             guard results.count < maxResults else { break }
             if seenPaths.insert(item.path).inserted {
                 results.append(item)
@@ -746,32 +784,47 @@ final class MemoryIndex {
             return Array(results.prefix(maxResults))
         }
 
-        // 4. Limited directory search (medium dataset)
-        searchDirectories(
-            lowerQuery: lowerQuery,
-            queryIsAscii: queryIsAscii,
-            excludedPaths: excludedPaths,
-            excludedFolderNames: excludedFolderNames,
-            results: &results,
-            seenPaths: &seenPaths,
-            maxResults: maxResults
-        )
+        // 4. contains 检索（中缀匹配，如 "report" 匹配 "my_report_final"）
+        if lowerQuery.count > 1 {
+            // bigram 倒排：全量召回文件 + 目录的中缀匹配。
+            // 旧实现只线性扫最近 50 目录 / 200 文件，老文件的中缀匹配永远搜不到。
+            searchByBigramContains(
+                lowerQuery: lowerQuery,
+                queryIsAscii: queryIsAscii,
+                excludedPaths: excludedPaths,
+                excludedExtensions: excludedExtensions,
+                excludedFolderNames: excludedFolderNames,
+                results: &results,
+                seenPaths: &seenPaths,
+                maxResults: maxResults
+            )
+        } else {
+            // 单字符查询没有 bigram，退回旧的线性扫描（最近目录 / 文件）
+            searchDirectories(
+                lowerQuery: lowerQuery,
+                queryIsAscii: queryIsAscii,
+                excludedPaths: excludedPaths,
+                excludedFolderNames: excludedFolderNames,
+                results: &results,
+                seenPaths: &seenPaths,
+                maxResults: maxResults
+            )
 
-        if results.count >= maxResults {
-            return Array(results.prefix(maxResults))
+            if results.count >= maxResults {
+                return Array(results.prefix(maxResults))
+            }
+
+            searchFiles(
+                lowerQuery: lowerQuery,
+                queryIsAscii: queryIsAscii,
+                excludedPaths: excludedPaths,
+                excludedExtensions: excludedExtensions,
+                excludedFolderNames: excludedFolderNames,
+                results: &results,
+                seenPaths: &seenPaths,
+                maxResults: maxResults
+            )
         }
-
-        // 5. Very limited file search (last resort, drastically reduced)
-        searchFiles(
-            lowerQuery: lowerQuery,
-            queryIsAscii: queryIsAscii,
-            excludedPaths: excludedPaths,
-            excludedExtensions: excludedExtensions,
-            excludedFolderNames: excludedFolderNames,
-            results: &results,
-            seenPaths: &seenPaths,
-            maxResults: maxResults
-        )
 
         // 最终排序：matchType > typePriority > 原始顺序（稳定排序保持层间优先级）
         let finalResults = Array(results.prefix(maxResults))
@@ -843,6 +896,7 @@ final class MemoryIndex {
         }
     }
 
+    /// 线性扫描最近目录（仅单字符查询的回退路径；≥2 字符走 bigram 倒排全量召回）
     private func searchDirectories(
         lowerQuery: String,
         queryIsAscii: Bool,
@@ -873,6 +927,7 @@ final class MemoryIndex {
         }
     }
 
+    /// 线性扫描最近文件（仅单字符查询的回退路径；≥2 字符走 bigram 倒排全量召回）
     private func searchFiles(
         lowerQuery: String,
         queryIsAscii: Bool,
@@ -910,94 +965,159 @@ final class MemoryIndex {
         }
     }
 
-    /// Optimized Trie candidate retrieval - returns paths directly
-    /// 高性能获取前缀匹配候选项，直接返回路径集合
-    private func getTrieCandidates(lowerQuery: String, queryIsAscii: Bool) -> Set<String> {
-        var candidatePaths = Set<String>()
+    // MARK: - 前缀检索（有序数组 + 二分）
 
-        // 从 name trie 获取候选路径
-        if let paths = searchTrieForPaths(nameTrie, prefix: lowerQuery) {
-            candidatePaths.formUnion(paths)
-        }
-
-        // 从 pinyin trie 获取候选路径（仅 ASCII 查询）
-        if queryIsAscii {
-            if let paths = searchTrieForPaths(pinyinTrie, prefix: lowerQuery) {
-                candidatePaths.formUnion(paths)
+    /// 二分查找：返回第一个 key >= target 的下标（数组需按 key 升序）。
+    /// 前缀范围 = [lowerBound(prefix), 向后扫描到前缀失配)。
+    private static func lowerBound(
+        _ array: [SearchItem], key: (SearchItem) -> String, target: String
+    ) -> Int {
+        var low = 0
+        var high = array.count
+        while low < high {
+            let mid = (low + high) / 2
+            if key(array[mid]) < target {
+                low = mid + 1
+            } else {
+                high = mid
             }
         }
-
-        // 从 alias trie 获取候选路径
-        if let paths = searchTrieForPaths(aliasTrie, prefix: lowerQuery) {
-            candidatePaths.formUnion(paths)
-        }
-
-        return candidatePaths
+        return low
     }
 
-    /// Optimized Trie search that returns paths directly
-    /// 优化版Trie搜索，直接返回路径而不是完整对象
-    private func searchTrieForPaths(_ root: TrieNode, prefix: String) -> Set<String>? {
-        var current = root
+    /// 在按键升序的数组中做前缀范围检索，收集匹配项到 matches。
+    /// 单个数组最多收集 maxPrefixCandidates 条，避免超短查询（如单字母）
+    /// 的前缀范围过大导致长尾扫描。
+    private func collectPrefixMatches(
+        from sortedItems: [SearchItem],
+        key: (SearchItem) -> String,
+        lowerQuery: String,
+        queryIsAscii: Bool,
+        excludedApps: Set<String>,
+        excludedPaths: [String],
+        excludedExtensions: Set<String>,
+        excludedFolderNames: Set<String>,
+        into matches: inout [SearchItem],
+        seenPaths: inout Set<String>
+    ) {
+        var collected = 0
+        var index = Self.lowerBound(sortedItems, key: key, target: lowerQuery)
+        while index < sortedItems.count {
+            let item = sortedItems[index]
+            guard key(item).hasPrefix(lowerQuery) else { break }
+            index += 1
 
-        for char in prefix {
-            guard let next = current.children[char] else {
-                return nil
+            // 懒删除校验：条目可能已移出 allItems（或同路径被新对象替换）
+            guard allItems[item.path] === item else { continue }
+            guard !seenPaths.contains(item.path) else { continue }
+
+            // Apply exclusions early to avoid unnecessary processing
+            guard !excludedApps.contains(item.path) else { continue }
+            if excludedPaths.contains(where: { item.path.hasPrefix($0) }) { continue }
+
+            if !excludedExtensions.isEmpty {
+                let ext = (item.path as NSString).pathExtension.lowercased()
+                if excludedExtensions.contains(ext) { continue }
             }
-            current = next
-        }
 
-        return current.itemPaths
-    }
-
-    // MARK: - Trie Operations
-
-    private func insertIntoTrie(_ root: TrieNode, key: String, item: SearchItem) {
-        var current = root
-
-        for char in key {
-            if current.children[char] == nil {
-                current.children[char] = TrieNode()
+            if !excludedFolderNames.isEmpty {
+                let components = item.path.components(separatedBy: "/")
+                if !excludedFolderNames.isDisjoint(with: components) { continue }
             }
-            current = current.children[char]!
-            current.itemPaths.insert(item.path)  // Only store path for memory efficiency
-        }
 
-        current.isEndOfWord = true
-    }
+            // Check actual match
+            if item.matchesQuery(lowerQuery) != nil {
+                matches.append(item)
+                collected += 1
+            } else if queryIsAscii && item.matchesPinyin(lowerQuery) {
+                matches.append(item)
+                collected += 1
+            }
 
-    /// 从 Trie 移除指定 path：沿 key 遍历，从每个经过节点的 itemPaths 删除该 path，
-    /// 并自底向上修剪「既无 itemPaths 又无 children」的空叶子节点，回收 TrieNode。
-    /// 共用节点（仍有其他 item）不会变空，因此不会被误删。
-    private func trieRemove(_ root: TrieNode, key: String, path: String) {
-        var stack: [(parent: TrieNode, char: Character, node: TrieNode)] = []
-        var current = root
-        for char in key {
-            guard let next = current.children[char] else { return }  // key 不存在，无需清理
-            stack.append((current, char, next))
-            current = next
-        }
-        for entry in stack {
-            entry.node.itemPaths.remove(path)
-        }
-        while let (parent, char, node) = stack.popLast() {
-            guard node.itemPaths.isEmpty, node.children.isEmpty else { break }
-            parent.children.removeValue(forKey: char)
+            if collected >= Self.maxPrefixCandidates { break }
         }
     }
 
-    private func searchTrie(_ root: TrieNode, prefix: String) -> [SearchItem]? {
-        var current = root
+    /// 单个前缀数组最多收集的候选数（超短查询的防御性上限）
+    private static let maxPrefixCandidates = 2_000
 
-        for char in prefix {
-            guard let next = current.children[char] else {
-                return nil
+    // MARK: - bigram 倒排索引（contains 全量召回）
+
+    /// 提取字符串的相邻字符对（去重）。少于 2 个字符返回空数组。
+    private static func bigrams(of key: String) -> [String] {
+        guard key.count > 1 else { return [] }
+        let chars = Array(key)
+        var seen = Set<String>()
+        var result: [String] = []
+        result.reserveCapacity(min(chars.count - 1, 32))
+        for i in 0..<(chars.count - 1) {
+            let gram = String(chars[i...i + 1])
+            if seen.insert(gram).inserted {
+                result.append(gram)
             }
-            current = next
         }
+        return result
+    }
 
-        // Convert paths back to items
-        return current.itemPaths.compactMap { allItems[$0] }
+    /// 把条目名称的 bigram 写入倒排索引（必须在 queue 中调用）。
+    /// apps 不入倒排：数量少（几百个）且步骤 3 已全量线性扫描 + 模糊匹配。
+    private func indexBigramsLocked(_ item: SearchItem) {
+        guard !item.isApp else { return }
+        for gram in Self.bigrams(of: item.lowerName) {
+            bigramIndex[gram, default: []].append(item)
+        }
+    }
+
+    /// 用 bigram 倒排做全量 contains 检索（文件 + 目录）。
+    /// 取「查询 bigram 中 posting 最短」的列表逐项验证完整 contains——
+    /// 名字包含查询就必须包含查询的每个 bigram，因此任一 bigram 在索引中
+    /// 不存在即可直接判定零命中（字典 miss 即 O(1) 出口）。
+    private func searchByBigramContains(
+        lowerQuery: String,
+        queryIsAscii: Bool,
+        excludedPaths: [String],
+        excludedExtensions: Set<String>,
+        excludedFolderNames: Set<String>,
+        results: inout [SearchItem],
+        seenPaths: inout Set<String>,
+        maxResults: Int
+    ) {
+        var shortestPostings: [SearchItem] = []
+        var shortestCount = Int.max
+        for gram in Self.bigrams(of: lowerQuery) {
+            guard let postings = bigramIndex[gram] else { return }
+            if postings.count < shortestCount {
+                shortestCount = postings.count
+                shortestPostings = postings
+            }
+        }
+        guard !shortestPostings.isEmpty else { return }
+
+        for item in shortestPostings {
+            guard results.count < maxResults else { break }
+
+            // 懒删除校验：posting 里可能残留已移除的条目
+            guard allItems[item.path] === item else { continue }
+            guard seenPaths.insert(item.path).inserted else { continue }
+
+            // Apply exclusions
+            if excludedPaths.contains(where: { item.path.hasPrefix($0) }) { continue }
+            if !excludedExtensions.isEmpty {
+                let ext = (item.path as NSString).pathExtension.lowercased()
+                if excludedExtensions.contains(ext) { continue }
+            }
+            if !excludedFolderNames.isEmpty {
+                let components = item.path.components(separatedBy: "/")
+                if !excludedFolderNames.isDisjoint(with: components) { continue }
+            }
+
+            // 前缀命中已在步骤 2 进入 seenPaths，这里自然只收中缀（contains）匹配
+            if item.matchesQuery(lowerQuery) != nil {
+                results.append(item)
+            } else if queryIsAscii && item.matchesPinyin(lowerQuery) {
+                results.append(item)
+            }
+        }
     }
 
     // MARK: - 别名支持
@@ -1050,8 +1170,6 @@ final class MemoryIndex {
                 result[pair.key.lowercased()] = pair.value
             }
 
-            self.rebuildAliasTrie()
-
             print("MemoryIndex: Updated alias map with \(map.count) aliases")
         }
     }
@@ -1100,8 +1218,6 @@ final class MemoryIndex {
                 addedPaths.insert(toolInfo.path)
             }
 
-            self.rebuildAliasTrie()
-
             print(
                 "MemoryIndex: Updated alias map with \(toolsMap.count) aliases, \(self.tools.count) tool items"
             )
@@ -1139,33 +1255,6 @@ final class MemoryIndex {
             }
 
             print("MemoryIndex: Updated tools list with \(self.tools.count) items")
-        }
-    }
-
-    /// 重建别名 Trie
-    private func rebuildAliasTrie() {
-        aliasTrie = TrieNode()
-
-        for (alias, path) in aliasMap {
-            // 首先尝试从 allItems 中查找（应用类型）
-            if let item = allItems[path] {
-                insertIntoTrie(aliasTrie, key: alias, item: item)
-            }
-            // 如果找不到，尝试从 aliasToolMap 创建临时 SearchItem（网页直达、系统命令等）
-            else if let toolInfo = aliasToolMap[alias] {
-                let item = SearchItem(
-                    name: toolInfo.name,
-                    path: toolInfo.path,
-                    isWebLink: toolInfo.isWebLink,
-                    isUtility: toolInfo.isUtility,
-                    isSystemCommand: toolInfo.isSystemCommand,
-                    iconData: toolInfo.iconData,
-                    alias: toolInfo.alias,
-                    supportsQuery: toolInfo.supportsQuery,
-                    defaultUrl: toolInfo.defaultUrl
-                )
-                insertIntoTrie(aliasTrie, key: alias, item: item)
-            }
         }
     }
 
