@@ -39,6 +39,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var permissionObserver: AnyCancellable?
     private var hotKeyObservers: Set<AnyCancellable> = []
     private var isStatusItemSetup = false
+    private var hideStatusBarIconObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // 1. 关键路径：必须先检查 Translocation 和设置激活策略
@@ -79,6 +80,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.async { [weak self] in
             self?.setupSettingsOpenerWindow()
             self?.observeHotKeyChanges()
+            self?.observeHideStatusBarIconChanges()
             self?.migrateRemindersSettings()
             self?.applyKeyRemapSettings()
             // 启动主线程看门狗：检测主线程被系统输入法切换遥测(Caps Lock)长时间卡死时，
@@ -179,9 +181,37 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             .store(in: &hotKeyObservers)
     }
 
+    /// 监听「隐藏菜单栏图标」设置变化，实时显示/隐藏状态栏图标
+    private func observeHideStatusBarIconChanges() {
+        hideStatusBarIconObserver = NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("hideStatusBarIconDidChange"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.applyStatusBarIconVisibility()
+        }
+    }
+
+    /// 根据用户设置显示/隐藏菜单栏图标
+    private func applyStatusBarIconVisibility() {
+        if UserDefaults.standard.bool(forKey: "hideStatusBarIcon") {
+            // 隐藏：移除已有状态栏图标
+            if let statusItem = statusItem {
+                NSStatusBar.system.removeStatusItem(statusItem)
+                self.statusItem = nil
+                isStatusItemSetup = false
+                print("LaunchX: StatusItem hidden by user setting")
+            }
+        } else {
+            // 显示：重置标志后重建状态栏图标
+            isStatusItemSetup = false
+            setupStatusItem()
+        }
+    }
+
     /// 更新状态栏菜单的快捷键显示
     private func updateStatusItemMenu() {
-        guard let menu = statusItem.menu,
+        guard let menu = statusItem?.menu,
             let openItem = menu.items.first(where: { $0.action == #selector(togglePanel) })
         else {
             return
@@ -518,6 +548,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         print(
             "LaunchX: setupStatusItem called, isStatusItemSetup=\(isStatusItemSetup), statusItem!=nil=\(statusItem != nil)"
         )
+
+        // 用户在设置中隐藏菜单栏图标时不创建状态栏图标
+        guard !UserDefaults.standard.bool(forKey: "hideStatusBarIcon") else {
+            print("LaunchX: StatusItem skipped (hidden by user setting)")
+            return
+        }
 
         // Prevent multiple setups
         if isStatusItemSetup && statusItem != nil {

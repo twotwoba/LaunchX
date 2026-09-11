@@ -62,6 +62,8 @@ struct GeneralSettingsView: View {
     // Window Mode persistence
     @AppStorage("defaultWindowMode") private var windowModeString: String = "full"
     @AppStorage("enableLiquidGlass") private var enableLiquidGlass: Bool = true
+    // 隐藏菜单栏图标
+    @AppStorage("hideStatusBarIcon") private var hideStatusBarIcon: Bool = false
 
     // Launch at Login state
     @State private var isLaunchAtLoginEnabled: Bool = false
@@ -92,10 +94,33 @@ struct GeneralSettingsView: View {
                     Spacer()
                 }
 
+                // 3. Hide Status Bar Icon（隐藏菜单栏图标）
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 12) {
+                        Text("菜单栏图标:")
+                            .frame(width: 85, alignment: .leading)
+                        Toggle("隐藏", isOn: $hideStatusBarIcon)
+                            .toggleStyle(CheckboxToggleStyle())
+                            .onChange(of: hideStatusBarIcon) { _, _ in
+                                // 通知 AppDelegate 实时显示/隐藏菜单栏图标
+                                NotificationCenter.default.post(
+                                    name: NSNotification.Name("hideStatusBarIconDidChange"),
+                                    object: nil)
+                            }
+                        Spacer()
+                    }
+                    // 隐藏图标后设置入口提示（主面板 ⌘, 仍可打开设置）
+                    Text("隐藏后仍可通过主面板按 ⌘, 打开设置")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .padding(.leading, 97)
+                }
+                .padding(.top, 4)
+
                 Divider()
                     .padding(.vertical, 4)
 
-                // 3. Default Window Mode
+                // 4. Default Window Mode
                 VStack(alignment: .leading, spacing: 8) {
                     Text("默认窗口模式:")
 

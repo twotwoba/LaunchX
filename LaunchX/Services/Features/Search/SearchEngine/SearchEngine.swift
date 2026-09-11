@@ -867,9 +867,22 @@ final class SearchEngine: ObservableObject {
 
             var results = items.map { $0.toSearchResult() }
 
-            // 添加书签搜索结果
+            // 添加书签搜索结果：书签排名优先级高于文件/文件夹，
+            // 插入到第一个文件类结果之前（应用、网页直达、工具等高价值结果仍排在书签前面）
             let bookmarkResults = searchBookmarks(query: text)
-            results.append(contentsOf: bookmarkResults)
+            if !bookmarkResults.isEmpty {
+                // 文件类结果 = 非应用、非网页直达、非实用工具、非系统命令的本地文件/目录
+                let isFileLike: (SearchResult) -> Bool = { result in
+                    !(result.path.hasSuffix(".app") || result.isWebLink || result.isUtility
+                        || result.isSystemCommand)
+                }
+                if let insertIndex = results.firstIndex(where: isFileLike) {
+                    results.insert(contentsOf: bookmarkResults, at: insertIndex)
+                } else {
+                    // 没有文件类结果时（例如仅命中应用），追加在末尾
+                    results.append(contentsOf: bookmarkResults)
+                }
+            }
 
             // Cache results for duplicate queries (e.g., user backspacing)
             searchCache.cacheResults(results, for: text)

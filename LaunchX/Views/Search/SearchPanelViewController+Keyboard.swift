@@ -232,6 +232,15 @@ extension SearchPanelViewController {
                 }
                 return nil
             }
+            // Cmd+, - 打开设置（菜单栏图标被隐藏时的设置入口兜底）
+            if event.modifierFlags.contains(.command) && event.keyCode == 43 {
+                PanelManager.shared.hidePanel()
+                // 打开设置时恢复权限检查（与菜单栏入口行为一致）
+                PermissionService.shared.startPeriodicCheck()
+                NSApp.activate(ignoringOtherApps: true)
+                NotificationCenter.default.post(name: .openSettingsNotification, object: nil)
+                return nil
+            }
             // 检查是否输入了 '=' 号且计算器有结果
             if event.characters == "=" && calculatorResult != nil {
                 if let result = calculatorResult {
