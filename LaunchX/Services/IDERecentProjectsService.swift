@@ -128,16 +128,31 @@ final class IDERecentProjectsService {
         IDEType.detect(from: appPath)?.isJetBrains == true
     }
 
+    /// 指定应用是否已在运行（JetBrains 冷/热启动分流依据；runningApplications 须在主线程访问）
+    private func isAppRunning(_ appPath: String) -> Bool {
+        guard let bundleId = Bundle(path: appPath)?.bundleIdentifier else { return false }
+        return NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == bundleId }
+    }
+
     /// 启动应用并打开目标路径（项目文件夹或普通文件夹）。
     ///
-    /// JetBrains 系列必须走 IDE 自带的启动器二进制 `Contents/MacOS/<exec>`，而非 `open -a`：
-    /// `open -a <app> <path>` 走 macOS LaunchServices 的「打开文档」Apple Event，当目标项目已打开
-    /// （尤其在全屏 Space 中）时，JetBrains 会新建一个空白窗口、且无法切到已有的全屏面板；
-    /// 改用启动器二进制后，它通过 IPC 把「打开/激活项目」转发给已运行实例，由实例自身激活对应窗口，
-    /// 能正确跨 Space（含全屏）切换，且非全屏时也不再闪烁。其余应用（VSCode/Cursor/Finder 等）
-    /// 沿用 `open -a`，其窗口复用机制不受此问题影响。
+    /// JetBrains 系列按「冷/热启动」分流：
+    /// - **热启动（IDE 已在运行）**：必须走 IDE 自带的启动器二进制 `Contents/MacOS/<exec>`，而非 `open -a`。
+    ///   `open -a <app> <path>` 走 macOS LaunchServices 的「打开文档」Apple Event，当目标项目已打开
+    ///   （尤其在全屏 Space 中）时，JetBrains 会新建一个空白窗口、且无法切到已有的全屏面板；
+    ///   改用启动器二进制后，它通过 IPC 把「打开/激活项目」转发给已运行实例，由实例自身激活对应窗口，
+    ///   能正确跨 Space（含全屏）切换，且非全屏时也不再闪烁。
+    /// - **冷启动（IDE 未运行）**：不存在上述窗口复用问题，走 `open -a`。若用 `Process` 直接启动二进制，
+    ///   IDE 会终身作为 LaunchX 的子进程存活，活动监视器会把 IDE（JVM/索引/AI 子进程）数小时的能耗
+    ///   全部归因到 LaunchX 头上；`open -a` 由 launchd 拉起，归因独立。热启动路径的启动器二进制在 IPC
+    ///   转发后立即退出，不会形成长驻子进程，无此顾虑。
+    ///
+    /// 其余应用（VSCode/Cursor/Finder 等）始终沿用 `open -a`，其窗口复用机制不受此问题影响。
     private func launch(targetPath: String, withAppAt appPath: String, isJetBrains: Bool) {
-        if isJetBrains, let launcherURL = Bundle(path: appPath)?.executableURL {
+        if isJetBrains,
+           let launcherURL = Bundle(path: appPath)?.executableURL,
+           isAppRunning(appPath)
+        {
             let process = Process()
             process.executableURL = launcherURL
             process.arguments = [targetPath]
@@ -153,7 +168,7 @@ final class IDERecentProjectsService {
             }
         }
 
-        // 兜底 / 非 JetBrains：沿用 open -a
+        // 冷启动 / 兜底 / 非 JetBrains：沿用 open -a
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
         process.arguments = ["-a", appPath, targetPath]
