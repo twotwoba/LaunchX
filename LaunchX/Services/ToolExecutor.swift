@@ -78,7 +78,7 @@ class ToolExecutor {
             // 直接打开应用或文件夹
             print("[ToolExecutor] Opening app/folder: \(path)")
             let url = URL(fileURLWithPath: path)
-            NSWorkspace.shared.open(url)
+            AppOpener.open(url)
         }
     }
 
@@ -126,7 +126,7 @@ class ToolExecutor {
         }
 
         print("[ToolExecutor] Opening URL: \(url)")
-        NSWorkspace.shared.open(url)
+        AppOpener.open(url)
     }
 
     // MARK: - 实用工具执行

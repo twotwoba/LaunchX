@@ -172,7 +172,9 @@ struct TwoFactorAuthSettingsView: View {
                     }
 
                     Button("打开「信息」应用") {
-                        NSWorkspace.shared.open(URL(string: "messages://")!)
+                        if let url = URL(string: "messages://") {
+                            AppOpener.open(url)
+                        }
                     }
                     .font(.caption)
                     .padding(.top, 4)
@@ -206,7 +208,7 @@ struct TwoFactorAuthSettingsView: View {
         if let url = URL(
             string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")
         {
-            NSWorkspace.shared.open(url)
+            AppOpener.open(url)
         }
     }
 }

@@ -184,19 +184,34 @@ final class RemindersService {
         }
     }
 
+    /// 打开 URL 的实现（测试可注入；生产环境指向 AppOpener 的异步打开）
+    var urlOpener: (_ url: URL, _ completion: @escaping (Error?) -> Void) -> Void = { url, completion in
+        _ = AppOpener.open(url, completion: completion)
+    }
+
     /// Open the Reminders app for a specific reminder
+    ///
+    /// 优先用 `x-apple-reminders://` deep link 打开具体提醒；deep link 打开失败时
+    /// 兜底直接打开提醒事项 App。全程异步（AppOpener），不阻塞调用线程。
     func openInReminders(identifier: String?) {
         // Try to open specific reminder using the correct scheme (x-apple-reminders://)
-        if let id = identifier {
-            let urlString = "x-apple-reminders://\(id)"
-            if let url = URL(string: urlString), NSWorkspace.shared.open(url) {
-                return
+        if let id = identifier, let url = URL(string: "x-apple-reminders://\(id)") {
+            urlOpener(url) { [weak self] error in
+                if error != nil {
+                    // Fallback: deep link 失败（如系统不支持该 scheme），直接打开提醒事项 App
+                    self?.openRemindersAppDirectly()
+                }
             }
+            return
         }
 
-        // Fallback: Open the Reminders app directly
+        openRemindersAppDirectly()
+    }
+
+    /// Fallback: Open the Reminders app directly
+    private func openRemindersAppDirectly() {
         if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.reminders") {
-            NSWorkspace.shared.open(appURL)
+            urlOpener(appURL, { _ in })
         }
     }
 

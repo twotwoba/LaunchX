@@ -150,7 +150,7 @@ class PermissionService: ObservableObject {
     private func openSystemSettings(pane: String) {
         let urlString = "x-apple.systempreferences:com.apple.preference.security?\(pane)"
         if let url = URL(string: urlString) {
-            NSWorkspace.shared.open(url)
+            AppOpener.open(url)
         }
     }
 }

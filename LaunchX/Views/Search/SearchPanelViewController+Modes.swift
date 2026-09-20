@@ -197,7 +197,7 @@ extension SearchPanelViewController {
             quickActionAirDrop(path: target.path)
         case .openURL:
             if let url = target.reminderURL {
-                NSWorkspace.shared.open(url)
+                AppOpener.open(url)
                 PanelManager.shared.hidePanel()
             }
         case .openInReminders, .openInApp:
@@ -738,7 +738,7 @@ extension SearchPanelViewController {
         }
 
         if let urlString = finalUrl, let url = URL(string: urlString) {
-            NSWorkspace.shared.open(url)
+            AppOpener.open(url)
             // 记录到 LRU 缓存
             RecentAppsManager.shared.recordWebLinkOpen(url: webLink.path, name: webLink.name)
         }

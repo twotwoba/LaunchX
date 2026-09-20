@@ -140,7 +140,7 @@ extension SearchPanelViewController: QuickActionsViewDelegate {
 extension SearchPanelViewController: ReminderActionViewDelegate {
     func reminderActionViewDidRequestOpenURL(_ view: ReminderActionView) {
         if let url = currentQuickActionTarget?.reminderURL {
-            NSWorkspace.shared.open(url)
+            AppOpener.open(url)
             PanelManager.shared.hidePanel()
         }
     }

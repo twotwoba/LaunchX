@@ -877,7 +877,7 @@ extension SearchPanelViewController {
             }
 
             if let url = URL(string: finalUrl) {
-                NSWorkspace.shared.open(url)
+                AppOpener.open(url)
                 // 记录到 LRU 缓存
                 RecentAppsManager.shared.recordWebLinkOpen(url: item.path, name: item.name)
             }
@@ -1015,10 +1015,10 @@ extension SearchPanelViewController {
             RecentAppsManager.shared.recordAppOpen(path: item.path)
         }
 
-        // 先隐藏面板，再异步打开 app（避免权限弹窗阻塞面板关闭）
+        // 先隐藏面板，再异步打开 app。
+        // 必须走异步启动（AppOpener）：同步 NSWorkspace.open 会阻塞主线程直到目标
+        // 应用完成启动，冷启动重型应用期间快捷键/面板将完全无法响应。
         PanelManager.shared.hidePanel()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            NSWorkspace.shared.open(url)
-        }
+        AppOpener.open(url)
     }
 }

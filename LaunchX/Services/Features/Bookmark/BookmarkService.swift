@@ -388,7 +388,7 @@ final class BookmarkService {
         case .bookmarkBrowser:
             openWithBrowser(url: url, source: bookmark.source)
         case .defaultBrowser:
-            NSWorkspace.shared.open(url)
+            AppOpener.open(url)
         case .safari:
             openWithBrowser(url: url, source: .safari)
         case .chrome:
@@ -538,11 +538,10 @@ final class BookmarkService {
 
     private func openWithBrowser(url: URL, source: BookmarkSource) {
         if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: source.bundleIdentifier) {
-            NSWorkspace.shared.open(
-                [url], withApplicationAt: appURL, configuration: NSWorkspace.OpenConfiguration())
+            AppOpener.open([url], withApplicationAt: appURL)
         } else {
             // 如果浏览器未安装，使用默认浏览器打开
-            NSWorkspace.shared.open(url)
+            AppOpener.open(url)
         }
     }
 
