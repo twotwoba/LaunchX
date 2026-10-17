@@ -1,177 +1,179 @@
 # LaunchX
 
-一个现代、优雅且智能的 macOS 启动器。高性能的应用和文件搜索，丰富的扩展功能，让你的 Mac 使用效率翻倍。
+English | [简体中文](README.zh-CN.md)
+
+A modern, elegant, and intelligent macOS launcher. High-performance app and file search with rich extensions — double your Mac productivity.
 
 ![macOS](https://img.shields.io/badge/macOS-14.0+-blue.svg)
 ![Swift](https://img.shields.io/badge/Swift-5.9-orange.svg)
 ![License](https://img.shields.io/badge/License-Apache%202.0-green.svg)
 
-**搜索应用、文件、书签、剪贴板、提醒事项，调度 Claude Code / Codex —— 一切从 `⌥Space` 开始。**
+**Search apps, files, bookmarks, clipboard history, and reminders; dispatch Claude Code / Codex — all starting from `⌥Space`.**
 
-## 截图
+## Screenshot
 
 <p align="center">
-  <img src="./screenshots/main-panel.png" alt="LaunchX 主面板" width="720">
+  <img src="./screenshots/main-panel.png" alt="LaunchX main panel" width="720">
 </p>
 
-## 功能特性
+## Features
 
-### 核心功能
+### Core
 
-- **应用搜索** - 快速搜索并启动应用程序，支持英文、拼音、拼音缩写及 fzf 风格子序列模糊匹配
-- **文件搜索** - 高性能文件索引，FSEvents 实时监控文件变化；选中后按 `⌘K` 可直接执行 cd 至此、复制路径、在 Finder 中显示、隔空投送、删除等操作
-- **全局快捷键** - 自定义组合键或双击修饰键（双击 ⌥/⌘）快速唤起任何 App 或高级扩展
-- **别名系统** - 每个应用、网站、扩展都能设置短别名（如 `gh` → GitHub、`cc` → Claude Code 切换），输入两三个字母直达
-- **IDE 项目** - 快速打开 VSCode、Zed、Cursor、Antigravity、JetBrains 系列 IDE 的最近项目
-- **网页直达** - 配置常用网站，一键跳转或以关键词发起搜索
-- **最近使用** - LRU 算法智能追踪最近使用的应用，常用优先
-- **工具管理** - 所有工具统一收拢：别名、快捷键、启用开关，一张清单管理全部能力
+- **App Search** - Quickly find and launch applications, with English, Pinyin, Pinyin abbreviation, and fzf-style subsequence fuzzy matching
+- **File Search** - High-performance file index with real-time FSEvents monitoring; select a file and press `⌘K` to cd into it, copy its path, reveal it in Finder, share via AirDrop, delete it, and more
+- **Global Hotkeys** - Custom key combinations or double-tapped modifier keys (double `⌥`/`⌘`) to summon any app or advanced extension
+- **Alias System** - Assign short aliases to any app, website, or extension (e.g. `gh` → GitHub, `cc` → Claude Code switcher); two or three keystrokes get you there
+- **IDE Projects** - Quickly open recent projects from VSCode, Zed, Cursor, Antigravity, and JetBrains IDEs
+- **Web Shortcuts** - Configure your favorite websites for one-click navigation or keyword-driven search
+- **Recently Used** - LRU-based tracking of recently used apps, so favorites come first
+- **Tool Management** - Every tool in one place: aliases, hotkeys, and enable toggles for all capabilities on a single list
 
-### 高级扩展
+### Advanced Extensions
 
-- **剪贴板管理** - 自动记录剪贴板历史（文本、图片、链接、颜色），分类过滤、关键词搜索、纯文本粘贴，敏感 App 可加入忽略名单
-- **代码片段 (Snippet)** - 文本自动替换，支持动态变量（`{date}`、`{time}`、`{uuid}` 等）
-- **AI 翻译** - 集成多种 AI 服务进行智能翻译，`⌥W` 划词即译，推荐硅基流动中的免费模型
-- **书签搜索** - 从 Safari、Chrome、Helium 导入书签并快速搜索，自动同步变化
-- **提醒事项管理** - 展示当天提醒事项，备注中设有 URL 时可通过 `⌘K` 快速打开
-- **Claude Code 切换 (cc-switch)** - 输入 `cc` 唤起切换面板，Provider、上下文、MCP、Skills 即搜即切，不用手改配置文件
-- **Codex 管理** - 与 cc-switch 同款体验，预设角色上下文一键启用；鉴权写入 config.toml，GUI 启动不丢环境变量
-- **2FA 验证码** - 从短信中自动提取验证码（macOS 26 以下版本，新系统已内置）
-- **系统命令** - 快速执行系统设置（深色模式、锁屏、关机、清空废纸篓、隐藏 Dock 等 10+ 命令）
-- **实用工具** - Base64 编解码、IP 查询、URL 处理、UUID 生成、退出进程等
-- **默认终端** - 一键唤起终端，配合文件夹 `⌘K` 的「cd 至此」秒开工作目录
-- **内置 2 个改键选择** - 单/双引号互换，右 ⌘ 改为 Hyper 按键（F19）；caps/ctrl 互换去除了
+- **Clipboard Manager** - Automatically records clipboard history (text, images, links, colors) with category filters, keyword search, paste-as-plain-text, and an ignore list for sensitive apps
+- **Snippets** - Text auto-expansion with dynamic variables (`{date}`, `{time}`, `{uuid}`, etc.)
+- **AI Translation** - Intelligent translation via multiple AI services; `⌥W` translates selected text instantly. Free models on SiliconFlow recommended to get started
+- **Bookmark Search** - Import and search bookmarks from Safari, Chrome, and Helium, with automatic syncing
+- **Reminders** - Shows today's reminders; open attached URLs instantly via `⌘K` when a note contains one
+- **Claude Code Switcher (cc-switch)** - Type `cc` to bring up the switch panel; providers, context, MCP, and Skills are searchable and switchable — no more hand-editing config files
+- **Codex Manager** - Same experience as cc-switch; one-click activation of preset role contexts. Auth is written to config.toml, so GUI launches keep environment variables intact
+- **2FA Codes** - Automatically extracts verification codes from SMS (macOS versions below 26; newer systems have this built in)
+- **System Commands** - Quickly run system commands (dark mode, lock screen, shutdown, empty Trash, hide Dock, and 10+ more)
+- **Utilities** - Base64 encode/decode, IP lookup, URL handling, UUID generation, process quitting, and more
+- **Default Terminal** - Launch your terminal in one keystroke; pair it with the folder `⌘K` "cd here" action to open working directories instantly
+- **2 Built-in Key Remaps** - Swap single/double quotes, or remap right `⌘` to a Hyper key (F19); the caps/ctrl swap has been removed
 
-## 安装
+## Installation
 
-### 系统要求
+### Requirements
 
-- macOS 14.0 或更高版本
+- macOS 14.0 or later
 
-### 下载安装
+### Download
 
-1. 从 [Releases](https://github.com/twotwoba/LaunchX/releases) 下载最新的 `.dmg` 文件（Apple 芯片 / Intel 均有原生构建）
-2. 打开 DMG 文件，将 LaunchX 拖入 Applications 文件夹
-3. 首次启动时，按照引导授予必要权限
+1. Download the latest `.dmg` from [Releases](https://github.com/twotwoba/LaunchX/releases) (native builds for both Apple silicon and Intel)
+2. Open the DMG file and drag LaunchX into the Applications folder
+3. Follow the in-app guidance on first launch to grant the required permissions
 
-### 权限说明
+### Permissions
 
-LaunchX 需要以下系统权限才能正常工作：
+LaunchX needs the following system permissions to work properly:
 
-| 权限 | 用途 |
-|------|------|
-| **辅助功能** | 全局快捷键注册、键盘事件监听、代码片段自动替换 |
-| **完全磁盘访问** | 索引和搜索所有文件、读取浏览器书签 |
+| Permission | Purpose |
+|------------|---------|
+| **Accessibility** | Global hotkey registration, keyboard event monitoring, snippet auto-expansion |
+| **Full Disk Access** | Indexing and searching all files, reading browser bookmarks |
 
-首次启动时会有权限引导流程，按照提示操作即可。所有数据仅存储在本地。
+A permission onboarding flow runs on first launch — just follow the prompts. All data is stored locally only.
 
-## 快速上手
+## Getting Started
 
-### 基本使用
+### Basics
 
-1. **唤起搜索框** - 按下 `Option + Space`（可自定义，或双击修饰键）
-2. **搜索应用** - 输入应用名称，支持拼音、拼音缩写、模糊匹配
-3. **启动应用** - 按 `Enter` 打开选中的应用
-4. **上下选择** - 使用 `↑` `↓` 或 `Ctrl+n/p` 选择结果
-5. **就地操作** - 选中文件/文件夹后按 `⌘K` 呼出快捷操作菜单
+1. **Summon the search panel** - Press `Option + Space` (customizable, or double-tap a modifier key)
+2. **Search apps** - Type an app name; Pinyin, Pinyin abbreviations, and fuzzy matching are supported
+3. **Launch** - Press `Enter` to open the selected item
+4. **Navigate** - Use `↑` `↓` or `Ctrl+n/p` to move through results
+5. **In-place actions** - With a file/folder selected, press `⌘K` to open the quick actions menu
 
-### 快捷键
+### Shortcuts
 
-| 快捷键 | 功能 |
-|--------|------|
-| `Option + Space` | 唤起主搜索面板（默认） |
-| `Enter` | 打开选中项 |
-| `↑` / `↓` 或 `Ctrl+n/p` | 上下选择 |
-| `Tab` | 展开 IDE 项目列表 / 切换焦点 |
-| `⌘K` | 文件/文件夹快捷操作（cd 至此、复制路径等） |
-| `Esc` | 关闭面板 |
-| `Cmd + ,` | 打开设置 |
+| Shortcut | Action |
+|----------|--------|
+| `Option + Space` | Summon the main search panel (default) |
+| `Enter` | Open the selected item |
+| `↑` / `↓` or `Ctrl+n/p` | Move up/down |
+| `Tab` | Expand IDE project list / switch focus |
+| `⌘K` | Quick actions for files/folders (cd here, copy path, etc.) |
+| `Esc` | Dismiss the panel |
+| `Cmd + ,` | Open Settings |
 
-### 别名与扩展唤起
+### Aliases & Extension Triggers
 
-在设置中可为各扩展功能配置独立别名与快捷键，例如：
+Each extension can have its own alias and hotkey in Settings, for example:
 
-- `cc` / `cx` - Claude Code / Codex 切换面板
-- `bk` - 书签搜索
-- `⌥W` - AI 划词翻译
-- 剪贴板面板、默认终端等均可自定义
+- `cc` / `cx` - Claude Code / Codex switch panels
+- `bk` - Bookmark search
+- `⌥W` - AI translation of selected text
+- Clipboard panel, default terminal, and more are all customizable
 
-更多功能继续开发中...
+More features are on the way...
 
-## 配置
+## Configuration
 
-### 搜索范围
+### Search Scope
 
-在设置中可自定义：
+Customizable in Settings:
 
-- **应用搜索范围** - 默认搜索 `/Applications`、`/System/Applications` 等
-- **文档搜索范围** - 默认搜索下载、文档、桌面文件夹，可添加外置磁盘路径
-- **排除文件夹** - 如 `node_modules`、`dist` 等
-- **排除应用** - 隐藏不需要的应用
+- **App search scope** - Searches `/Applications`, `/System/Applications`, etc. by default
+- **Document search scope** - Searches Downloads, Documents, and Desktop by default; external drive paths can be added
+- **Excluded folders** - Such as `node_modules`, `dist`, etc.
+- **Excluded apps** - Hide apps you don't need
 
-### IDE 支持
+### IDE Support
 
-自动扫描以下 IDE 的最近项目：
+Recent projects are scanned automatically from:
 
 - Visual Studio Code
 - Zed
 - Cursor
 - Antigravity
-- IntelliJ IDEA / PyCharm / WebStorm / GoLand 等 JetBrains 系列
+- IntelliJ IDEA / PyCharm / WebStorm / GoLand and other JetBrains IDEs
 
-### AI 能力配置
+### AI Setup
 
-AI 翻译支持任意 OpenAI 兼容服务：
+AI translation works with any OpenAI-compatible service:
 
-- OpenAI (GPT)、Anthropic (Claude)、DeepSeek、智谱 GLM、阿里云通义千问等
-- 硅基流动等提供免费额度的服务即可开箱体验
-- 在设置中配置 API 地址、密钥与模型即可
+- OpenAI (GPT), Anthropic (Claude), DeepSeek, Zhipu GLM, Alibaba Qwen, and more
+- Services with free tiers such as SiliconFlow work out of the box
+- Configure the API endpoint, key, and model in Settings
 
-## 技术架构
+## Technical Architecture
 
-- **搜索引擎** - 基于 Trie 前缀树的高性能内存索引，重复搜索零开销，搜索响应 < 1ms
-- **文件监控** - 使用 FSEvents 实时监控文件变化，变更延迟低至 1.3s
-- **混合架构** - AppKit + SwiftUI，轻量锁替代串行队列，非关键路径延后执行
-- **数据持久化** - SQLite 索引数据库 + JSON 配置文件，数据全部本地存储
+- **Search Engine** - High-performance in-memory index built on a Trie prefix tree; repeated searches are free, with response times under 1 ms
+- **File Monitoring** - FSEvents-based real-time file monitoring with change latency as low as 1.3 s
+- **Hybrid Architecture** - AppKit + SwiftUI, lightweight locks instead of serial queues, non-critical work deferred
+- **Persistence** - SQLite index database + JSON config files; all data stays on your machine
 
-## 更新日志
+## Changelog
 
-查看 [CHANGELOG.md](CHANGELOG.md) 了解完整更新历史。
+See [CHANGELOG.md](CHANGELOG.md) for the full release history.
 
-## 开发
+## Development
 
-### 技术栈
+### Tech Stack
 
 - Swift 5.9
 - SwiftUI + AppKit
 - SQLite3
-- Carbon Framework (全局快捷键)
+- Carbon Framework (global hotkeys)
 
-### 项目结构
+### Project Structure
 
 ```
 LaunchX/
-├── App/                    # 应用入口和面板
-├── Models/                 # 数据模型
-├── Services/               # 业务逻辑服务
-│   └── SearchEngine/       # 搜索引擎核心
-├── ViewModels/             # 视图模型
-├── Views/                  # UI 视图
-└── Assets.xcassets/        # 资源文件
+├── App/                    # App entry point and panels
+├── Models/                 # Data models
+├── Services/               # Business logic services
+│   └── SearchEngine/       # Search engine core
+├── ViewModels/             # View models
+├── Views/                  # UI views
+└── Assets.xcassets/        # Asset catalog
 ```
 
-## 交流
+## Community
 
-如果您在使用过程中有任何建议、疑问或困难，可以提 issue 或者加我wx：EricYuan228
+If you have any suggestions, questions, or run into trouble, feel free to open an issue or reach me on WeChat: EricYuan228
 
-## 贡献
+## Contributing
 
-欢迎提交 Issue 和 Pull Request！
+Issues and Pull Requests are welcome!
 
-## 许可证
+## License
 
 [Apache License 2.0](LICENSE)
 
-## 致谢
+## Acknowledgments
 
-感谢所有为这个项目提供灵感和帮助的开源项目。
+Thanks to all the open-source projects that inspired and helped this one.
