@@ -13,7 +13,7 @@ A modern, elegant, and intelligent macOS launcher. High-performance app and file
 ## Screenshot
 
 <p align="center">
-  <img src="./screenshots/main-panel.png" alt="LaunchX main panel" width="720">
+  <img src="./screenshots/main-panel-v2.png" alt="LaunchX main panel" width="720">
 </p>
 
 ## Features

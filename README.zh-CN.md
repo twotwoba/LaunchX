@@ -13,7 +13,7 @@
 ## 截图
 
 <p align="center">
-  <img src="./screenshots/main-panel.png" alt="LaunchX 主面板" width="720">
+  <img src="./screenshots/main-panel-v2.png" alt="LaunchX 主面板" width="720">
 </p>
 
 ## 功能特性
