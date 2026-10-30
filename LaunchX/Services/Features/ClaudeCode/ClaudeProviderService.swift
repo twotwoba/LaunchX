@@ -393,9 +393,11 @@ final class ClaudeProviderService: ObservableObject {
             return nil
         }
 
-        // 更新当前 Provider
+        // 仅回填 Claude 侧的当前 Provider：settings.json 是 Claude 专用配置，
+        // 若命中 Codex Provider，会把其 CODEX_* 配置整体覆盖成 ANTHROPIC_*
+        // （曾导致已存 Key / Base URL 丢失），故必须限定 apps 包含 .claude。
         for i in providers.indices {
-            if providers[i].isCurrent {
+            if providers[i].isCurrent, providers[i].apps.contains(.claude) {
                 providers[i].settingsConfig = stringEnv
                 break
             }
