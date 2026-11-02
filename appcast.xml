@@ -3,16 +3,16 @@
     <channel>
         <title>LaunchX</title>
         <item>
-            <title>Version v0.6.1</title>
-            <sparkle:releaseNotesLink>https://github.com/twotwoba/LaunchX/releases/tag/v0.6.1</sparkle:releaseNotesLink>
-            <pubDate>Mon, 02 Nov 2026 07:14:19 +0000</pubDate>
-            <sparkle:version>133</sparkle:version>
-            <sparkle:shortVersionString>0.6.1</sparkle:shortVersionString>
+            <title>Version v0.6.2</title>
+            <sparkle:releaseNotesLink>https://github.com/twotwoba/LaunchX/releases/tag/v0.6.2</sparkle:releaseNotesLink>
+            <pubDate>Mon, 02 Nov 2026 07:41:10 +0000</pubDate>
+            <sparkle:version>134</sparkle:version>
+            <sparkle:shortVersionString>0.6.2</sparkle:shortVersionString>
             <enclosure
-                url="https://github.com/twotwoba/LaunchX/releases/download/v0.6.1/LaunchX-v0.6.1-arm64.dmg"
+                url="https://github.com/twotwoba/LaunchX/releases/download/v0.6.2/LaunchX-v0.6.2-arm64.dmg"
                 sparkle:os="macos"
-                sparkle:version="133"
-                sparkle:edSignature="SZVgdgll+HXFpTFM9azNFimdSVE78vu6AXLOwWMqIUkesPCkq1YDGV1ExrhM4+dS07F9ONP8mIVMyo7esUTyCQ==" length="3742463"
+                sparkle:version="134"
+                sparkle:edSignature="j6SVpjtDZzqIKu7Oq+bkw2oau0bFvUpJc7H0HfJmBIV9au7wL+afPyPk0vKfDbB8c2/+evCC6NPnoqRH58OeCA==" length="3742445"
                 type="application/octet-stream" />
         </item>
     </channel>
