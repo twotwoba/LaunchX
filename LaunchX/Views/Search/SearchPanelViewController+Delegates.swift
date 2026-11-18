@@ -8,9 +8,9 @@ extension SearchPanelViewController: NSTextFieldDelegate {
     func controlTextDidChange(_ obj: Notification) {
         let query = searchField.stringValue
 
-        // 只要是在非普通模式，或者输入为空，就彻底隐藏计算器预览
+        // 只要是在非普通模式，或者输入为空，就彻底隐藏计算器与汇率预览
         if isInAnyExtensionMode || query.isEmpty {
-            clearCalculatorResult()
+            clearInlinePreview()
         }
 
         // IDE 项目模式：搜索项目
@@ -75,9 +75,9 @@ extension SearchPanelViewController: NSTextFieldDelegate {
         // 普通模式：搜索应用和文件
         performSearch(query)
 
-        // 普通模式下更新计算器预览
+        // 普通模式下更新输入框内联预览(汇率换算与四则计算互斥分发)
         if !isInAnyExtensionMode {
-            updateCalculatorPreview(query)
+            updateInlinePreview(query)
         }
     }
 }

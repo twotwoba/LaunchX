@@ -22,37 +22,99 @@ extension SearchPanelViewController {
         cachedDefaultSearchWebLinks = nil
     }
 
+    // MARK: - 输入框内联预览
+
+    /// 内联预览统一入口:汇率换算与四则计算语法互斥,按解析结果分发
+    func updateInlinePreview(_ query: String) {
+        if CurrencySettings.load().isEnabled, let parsed = CurrencyParser.parse(query) {
+            // 汇率命中:清计算器态(标签随后由汇率渲染),走换算预览
+            clearCalculatorResult()
+            updateCurrencyPreview(parsed: parsed, query: query)
+            return
+        }
+        // 非汇率输入:先清汇率态,再交计算器决定显示或清理
+        clearCurrencyPreview()
+        updateCalculatorPreview(query)
+    }
+
+    /// 计算器预览:求值成功显示 ghost 文本,失败清理
     func updateCalculatorPreview(_ query: String) {
         if let result = CalculatorService.shared.evaluate(query) {
             calculatorResult = result
-
-            let font = searchField.font ?? NSFont.systemFont(ofSize: 22)
-            let resultFont = NSFont.systemFont(ofSize: font.pointSize, weight: .medium)
-            let resultString = " = \(result)"
-            let fullString = query + resultString
-
-            let attributedString = NSMutableAttributedString(string: fullString)
-            let nsQuery = query as NSString
-            let nsFull = fullString as NSString
-
-            let fullRange = NSRange(location: 0, length: nsFull.length)
-            let queryRange = NSRange(location: 0, length: nsQuery.length)
-            let resultRange = NSRange(
-                location: nsQuery.length, length: (resultString as NSString).length)
-
-            attributedString.addAttribute(.font, value: font, range: fullRange)
-            attributedString.addAttribute(.font, value: resultFont, range: resultRange)
-            // Make the prefix transparent so it perfectly overlays the search field text
-            attributedString.addAttribute(.foregroundColor, value: NSColor.clear, range: queryRange)
-            // Show the result as a secondary/placeholder color
-            attributedString.addAttribute(
-                .foregroundColor, value: NSColor.secondaryLabelColor, range: resultRange)
-
-            calculatorResultLabel.attributedStringValue = attributedString
-            calculatorResultLabel.isHidden = false
+            showGhostPreview(query: query, resultText: " = \(result)")
         } else {
             clearCalculatorResult()
         }
+    }
+
+    /// 汇率预览:先渲染缓存(可能过期,离线也有结果),过期或缺失时再发起网络刷新
+    func updateCurrencyPreview(parsed: CurrencyParser.ParseResult, query: String) {
+        // 解析目标:显式目标优先,否则用设置的默认目标(源即目标时按 CNY⇄USD 回转)
+        let targetCode = parsed.target?.code
+            ?? CurrencySettings.load().resolvedTargetCode(forSource: parsed.source.code)
+        guard let target = CurrencyCatalog.lookup(targetCode),
+            target.code != parsed.source.code
+        else {
+            clearCurrencyPreview()
+            clearCalculatorResult()
+            return
+        }
+
+        currencyPreviewQuery = query
+
+        // 渲染:query 未变才落标签,防止过期网络回调覆盖新输入
+        let render: (CurrencyQuote) -> Void = { [weak self] quote in
+            guard let self = self, self.currencyPreviewQuery == query else { return }
+            let converted = parsed.amount * quote.rate
+            let displayText = CurrencyFormatter.displayString(converted, currency: target)
+            self.showGhostPreview(query: query, resultText: " ≈ \(displayText)")
+            self.currencyConversion = CurrencyPreviewConversion(
+                copyText: displayText,
+                fillValue: CurrencyFormatter.amountString(converted))
+        }
+
+        // 1) 缓存即时渲染
+        if let cached = CurrencyService.shared.cachedQuote(
+            from: parsed.source.code, to: target.code)
+        {
+            render(cached)
+            if CurrencyService.shared.isFresh(cached) { return }
+        }
+
+        // 2) 过期或缺失:后台刷新
+        CurrencyService.shared.fetchQuote(
+            from: parsed.source.code, to: target.code
+        ) { result in
+            guard case .success(let quote) = result else { return }
+            render(quote)
+        }
+    }
+
+    /// 渲染 ghost 预览:前缀与输入文本透明重叠,结果段用次级色显示
+    private func showGhostPreview(query: String, resultText: String) {
+        let font = searchField.font ?? NSFont.systemFont(ofSize: 22)
+        let resultFont = NSFont.systemFont(ofSize: font.pointSize, weight: .medium)
+        let fullString = query + resultText
+
+        let attributedString = NSMutableAttributedString(string: fullString)
+        let nsQuery = query as NSString
+        let nsFull = fullString as NSString
+
+        let fullRange = NSRange(location: 0, length: nsFull.length)
+        let queryRange = NSRange(location: 0, length: nsQuery.length)
+        let resultRange = NSRange(
+            location: nsQuery.length, length: (resultText as NSString).length)
+
+        attributedString.addAttribute(.font, value: font, range: fullRange)
+        attributedString.addAttribute(.font, value: resultFont, range: resultRange)
+        // Make the prefix transparent so it perfectly overlays the search field text
+        attributedString.addAttribute(.foregroundColor, value: NSColor.clear, range: queryRange)
+        // Show the result as a secondary/placeholder color
+        attributedString.addAttribute(
+            .foregroundColor, value: NSColor.secondaryLabelColor, range: resultRange)
+
+        calculatorResultLabel.attributedStringValue = attributedString
+        calculatorResultLabel.isHidden = false
     }
 
     /// 增量更新 TableView，避免全量 reloadData 造成不必要的 Cell 重绘

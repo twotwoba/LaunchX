@@ -190,9 +190,28 @@ extension SearchPanelViewController {
                 return nil
             }
 
+            // 汇率预览有结果时，回车复制换算结果
+            if let conversion = currencyConversion {
+                let pasteboard = NSPasteboard.general
+                pasteboard.clearContents()
+                pasteboard.setString(conversion.copyText, forType: .string)
+
+                // 复制后退出
+                PanelManager.shared.hidePanel()
+                return nil
+            }
+
             openSelected()
             return nil
         default:
+            // 汇率预览有结果时，"=" 将换算数值带回输入框继续计算
+            if event.characters == "=", let conversion = currencyConversion {
+                searchField.stringValue = conversion.fillValue
+                clearInlinePreview()
+                // 触发一次搜索（与计算器回填行为保持一致）
+                performSearch(conversion.fillValue)
+                return nil
+            }
             // 检查是否输入了 '=' 号且计算器有结果
             if event.characters == "=" && calculatorResult != nil {
                 if let result = calculatorResult {
@@ -234,28 +253,7 @@ extension SearchPanelViewController {
                 NotificationCenter.default.post(name: .openSettingsNotification, object: nil)
                 return nil
             }
-            // 检查是否输入了 '=' 号且计算器有结果
-            if event.characters == "=" && calculatorResult != nil {
-                if let result = calculatorResult {
-                    searchField.stringValue = result
-                    calculatorResult = nil
-                    calculatorResultLabel.isHidden = true
-                    // 触发一次搜索（如果是数字可能没有搜索结果，但逻辑保持一致）
-                    performSearch(result)
-                    return nil
-                }
-            }
-
-            // 检查是否输入了 '=' 号且计算器有结果
-            if event.characters == "=" && calculatorResult != nil {
-                if let result = calculatorResult {
-                    searchField.stringValue = result
-                    clearCalculatorResult()
-                    // 触发一次搜索
-                    performSearch(result)
-                    return nil
-                }
-            }
+            // 注：此处曾有另两段与上方重复的 '=' 处理死代码（同层 switch 内不可达），已合并为上面一段
             return event
         }
     }

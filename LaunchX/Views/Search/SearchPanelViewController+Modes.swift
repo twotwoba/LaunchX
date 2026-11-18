@@ -522,7 +522,7 @@ extension SearchPanelViewController {
 
     /// 更新 IDE 模式 UI
     func updateIDEModeUI() {
-        clearCalculatorResult()
+        clearInlinePreview()
 
         guard let app = currentIDEApp else { return }
 
@@ -623,7 +623,7 @@ extension SearchPanelViewController {
 
     /// 更新文件夹打开模式 UI
     func updateFolderModeUI() {
-        clearCalculatorResult()
+        clearInlinePreview()
 
         guard let folder = currentFolder else { return }
 
@@ -702,7 +702,7 @@ extension SearchPanelViewController {
 
     /// 更新网页直达 Query 模式 UI
     func updateWebLinkQueryModeUI() {
-        clearCalculatorResult()
+        clearInlinePreview()
 
         guard let webLink = currentWebLinkResult else { return }
 
@@ -781,7 +781,7 @@ extension SearchPanelViewController {
 
     /// 清理所有扩展模式的 UI（用于切换到不同类型的扩展模式时）
     func cleanupAllExtensionModes() {
-        clearCalculatorResult()
+        clearInlinePreview()
         hideQuickActions()
 
         // 清理 IDE 项目模式
@@ -913,7 +913,7 @@ extension SearchPanelViewController {
 
     /// 更新实用工具模式 UI
     func updateUtilityModeUI() {
-        clearCalculatorResult()
+        clearInlinePreview()
 
         guard let result = currentUtilityResult else { return }
 
@@ -1186,7 +1186,7 @@ extension SearchPanelViewController {
 
     /// 更新书签模式 UI
     func updateBookmarkModeUI() {
-        clearCalculatorResult()
+        clearInlinePreview()
 
         // 显示 IDE Tag View 作为书签标签
         ideTagView.isHidden = false
@@ -1359,7 +1359,7 @@ extension SearchPanelViewController {
 
     /// 更新 2FA 模式 UI
     func update2FAModeUI() {
-        clearCalculatorResult()
+        clearInlinePreview()
 
         // 显示 IDE Tag View 作为 2FA 标签
         ideTagView.isHidden = false

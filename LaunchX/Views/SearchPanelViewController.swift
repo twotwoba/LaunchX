@@ -169,12 +169,28 @@ class SearchPanelViewController: NSViewController {
     var calculatorResult: String? = nil
     let calculatorResultLabel = NSTextField(labelWithString: "")
 
+    // 汇率预览状态(与计算器共用同一 ghost 标签,语法互斥不会同时出现)
+    var currencyConversion: CurrencyPreviewConversion? = nil  // 回车复制 / "=" 回填所需文案
+    var currencyPreviewQuery: String? = nil  // 发起换算时的 query,用于丢弃过期网络回调
+
     /// 统一清理计算器预览状态
     func clearCalculatorResult() {
         calculatorResult = nil
         calculatorResultLabel.isHidden = true
         calculatorResultLabel.stringValue = ""
         calculatorResultLabel.attributedStringValue = NSAttributedString(string: "")
+    }
+
+    /// 清理汇率预览状态(不动 ghost 标签,由当前展示方统一渲染)
+    func clearCurrencyPreview() {
+        currencyConversion = nil
+        currencyPreviewQuery = nil
+    }
+
+    /// 统一清理输入框内联预览(计算器 + 汇率),模式切换/面板隐藏时调用
+    func clearInlinePreview() {
+        clearCalculatorResult()
+        clearCurrencyPreview()
     }
 
     var isInQuickActionsMode: Bool = false
@@ -530,8 +546,8 @@ class SearchPanelViewController: NSViewController {
     }
 
     func resetState() {
-        // 清理计算器
-        clearCalculatorResult()
+        // 清理内联预览(计算器 + 汇率)
+        clearInlinePreview()
 
         // 隐藏快捷操作面板
         hideQuickActions()
