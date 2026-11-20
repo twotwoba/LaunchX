@@ -88,6 +88,8 @@ extension SearchPanelViewController {
             self.currencyConversion = CurrencyPreviewConversion(
                 copyText: displayText,
                 fillValue: CurrencyFormatter.amountString(converted))
+            // 渲染晚于 updateVisibility,需主动刷新右下角回车复制提示
+            self.updateShortcutHint()
         }
 
         // 1) 缓存即时渲染
@@ -101,6 +103,7 @@ extension SearchPanelViewController {
         // 2) 过期或缺失:先清掉旧目标残留的预览(避免点选切换后短暂显示错误币种),再后台刷新
         clearCalculatorResult()
         currencyConversion = nil
+        updateShortcutHint()
         CurrencyService.shared.fetchQuote(
             from: parsed.source.code, to: target.code
         ) { result in
@@ -527,6 +530,13 @@ extension SearchPanelViewController {
     }
 
     func updateShortcutHint() {
+        // 内联预览(汇率换算/计算器)激活时,右下角提示回车复制结果(样式与 ⌘K 提示一致)
+        if currencyConversion != nil || calculatorResult != nil {
+            shortcutHintLabel.stringValue = "⏎ 复制"
+            shortcutHintView.isHidden = false
+            return
+        }
+
         // 检查当前选中项是否支持快捷操作
         guard results.indices.contains(selectedIndex) else {
             shortcutHintView.isHidden = true
