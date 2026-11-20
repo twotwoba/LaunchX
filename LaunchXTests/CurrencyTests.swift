@@ -121,6 +121,61 @@ final class CurrencyTests: XCTestCase {
         XCTAssertNil(CurrencyCatalog.lookupPrefix(""))
     }
 
+    // MARK: - 胶囊展示顺序
+
+    func testTagOrderExcludesSourceCurrency() {
+        let tags = CurrencyCatalog.tagOrder(excluding: "USD")
+        XCTAssertFalse(tags.contains { $0.code == "USD" })
+        // 其余币种一个不少(目录内除源币种外全覆盖)
+        XCTAssertEqual(tags.count, CurrencyCatalog.currencies.count - 1)
+    }
+
+    func testTagOrderNilSourceCoversAllCurrencies() {
+        let tags = CurrencyCatalog.tagOrder(excluding: nil)
+        XCTAssertEqual(tags.count, CurrencyCatalog.currencies.count)
+    }
+
+    func testTagOrderCommonFirst() {
+        // 常用币种排在前:CNY 打头,美元其次
+        let tags = CurrencyCatalog.tagOrder(excluding: "CNY")
+        XCTAssertEqual(tags.first?.code, "USD")
+        XCTAssertEqual(tags[1].code, "EUR")
+        XCTAssertEqual(tags[2].code, "JPY")
+        // 无重复
+        XCTAssertEqual(Set(tags.map(\.code)).count, tags.count)
+    }
+
+    func testTagOrderCodesMatchCatalog() {
+        // 展示顺序表必须与目录精确对应(无目录外代码、无遗漏)
+        let catalogCodes = Set(CurrencyCatalog.currencies.map(\.code))
+        XCTAssertEqual(Set(CurrencyCatalog.tagOrderCodes), catalogCodes)
+    }
+
+    // MARK: - 胶囊流式布局
+
+    func testTagFlowViewWrapsAndTopsFirstRow() {
+        let flow = CurrencyTagFlowView(frame: NSRect(x: 0, y: 0, width: 600, height: 0))
+        flow.setTags(CurrencyCatalog.tagOrder(excluding: nil))
+        flow.selectedCode = "USD"
+        flow.layoutSubtreeIfNeeded()
+
+        // 27 个币种在 600pt 宽度下必然换行:高度应远大于单行胶囊
+        let intrinsicHeight = flow.intrinsicContentSize.height
+        XCTAssertGreaterThan(intrinsicHeight, 60)
+
+        // 按内容高度定框后再布局:首行胶囊应贴容器顶,所有胶囊不得越界
+        flow.frame = NSRect(x: 0, y: 0, width: 600, height: intrinsicHeight)
+        flow.layoutSubtreeIfNeeded()
+        let firstRowButton = flow.subviews.first
+        XCTAssertEqual(firstRowButton?.frame.maxY ?? -1, intrinsicHeight, accuracy: 0.5)
+        XCTAssertTrue(
+            flow.subviews.allSatisfy { flow.bounds.contains($0.frame) },
+            "所有胶囊都应落在容器边界内")
+        // 无胶囊超出容器宽度
+        XCTAssertTrue(
+            flow.subviews.allSatisfy { $0.frame.maxX <= 600 + 0.5 })
+    }
+
     // MARK: - 设置的目标货币回转规则
 
     func testResolvedTargetCode() {

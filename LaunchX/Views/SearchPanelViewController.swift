@@ -172,6 +172,11 @@ class SearchPanelViewController: NSViewController {
     // 汇率预览状态(与计算器共用同一 ghost 标签,语法互斥不会同时出现)
     var currencyConversion: CurrencyPreviewConversion? = nil  // 回车复制 / "=" 回填所需文案
     var currencyPreviewQuery: String? = nil  // 发起换算时的 query,用于丢弃过期网络回调
+    var currencyManualTargetCode: String? = nil  // 用户点选胶囊后临时生效的目标币种(显式目标优先于它)
+    let currencyTagView = CurrencyTagFlowView()  // 币种胶囊选择行(汇率命中时替换结果列表展示)
+
+    /// 是否处于币种胶囊选择态(汇率预览激活,下方展示胶囊而非结果列表)
+    var isCurrencyTagModeActive: Bool { !currencyTagView.isHidden }
 
     /// 统一清理计算器预览状态
     func clearCalculatorResult() {
@@ -181,10 +186,12 @@ class SearchPanelViewController: NSViewController {
         calculatorResultLabel.attributedStringValue = NSAttributedString(string: "")
     }
 
-    /// 清理汇率预览状态(不动 ghost 标签,由当前展示方统一渲染)
+    /// 清理汇率预览状态(含胶囊行隐藏;ghost 标签由当前展示方统一渲染)
     func clearCurrencyPreview() {
         currencyConversion = nil
         currencyPreviewQuery = nil
+        currencyManualTargetCode = nil
+        currencyTagView.isHidden = true
     }
 
     /// 统一清理输入框内联预览(计算器 + 汇率),模式切换/面板隐藏时调用

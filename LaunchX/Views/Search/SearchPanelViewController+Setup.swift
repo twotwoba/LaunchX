@@ -187,6 +187,28 @@ extension SearchPanelViewController {
             equalTo: searchField.trailingAnchor)
         calcTrailing.priority = .defaultHigh
         calcTrailing.isActive = true
+
+        // 币种胶囊选择行(汇率命中时替换结果列表展示)
+        setupCurrencyTagView()
+    }
+
+    /// 设置币种胶囊选择行 UI
+    func setupCurrencyTagView() {
+        currencyTagView.translatesAutoresizingMaskIntoConstraints = false
+        currencyTagView.isHidden = true
+        currencyTagView.onTagClicked = { [weak self] code in
+            self?.currencyTagClicked(code)
+        }
+        contentView.addSubview(currencyTagView)
+
+        NSLayoutConstraint.activate([
+            currencyTagView.leadingAnchor.constraint(
+                equalTo: contentView.leadingAnchor, constant: 20),
+            currencyTagView.trailingAnchor.constraint(
+                equalTo: contentView.trailingAnchor, constant: -20),
+            // 高度由 intrinsicContentSize(换行后行数)自适应
+            currencyTagView.topAnchor.constraint(equalTo: divider.bottomAnchor, constant: 14),
+        ])
     }
 
     /// 设置 UUID 生成器 UI

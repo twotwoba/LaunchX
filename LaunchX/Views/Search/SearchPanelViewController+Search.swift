@@ -49,8 +49,17 @@ extension SearchPanelViewController {
 
     /// 汇率预览:先渲染缓存(可能过期,离线也有结果),过期或缺失时再发起网络刷新
     func updateCurrencyPreview(parsed: CurrencyParser.ParseResult, query: String) {
-        // 解析目标:显式目标优先,否则用设置的默认目标(源即目标时按 CNY⇄USD 回转)
+        // 目标解析优先级:输入显式目标 > 胶囊点选 > 设置默认(源即目标时按 CNY⇄USD 回转)
+        if let explicit = parsed.target {
+            // 显式目标同步为点选态:删除目标子句后仍保持同一币种,胶囊高亮同步
+            currencyManualTargetCode = explicit.code
+        }
+        if parsed.target == nil, currencyManualTargetCode == parsed.source.code {
+            // 点选目标与源币种重合(切换单位后)时失效,回退默认目标
+            currencyManualTargetCode = nil
+        }
         let targetCode = parsed.target?.code
+            ?? currencyManualTargetCode
             ?? CurrencySettings.load().resolvedTargetCode(forSource: parsed.source.code)
         guard let target = CurrencyCatalog.lookup(targetCode),
             target.code != parsed.source.code
@@ -61,6 +70,14 @@ extension SearchPanelViewController {
         }
 
         currencyPreviewQuery = query
+
+        // 渲染币种胶囊:排除源币种,常用在前,选中当前目标;替换结果列表展示
+        currencyTagView.setTags(CurrencyCatalog.tagOrder(excluding: parsed.source.code))
+        currencyTagView.selectedCode = target.code
+        if currencyTagView.isHidden {
+            currencyTagView.isHidden = false
+        }
+        updateVisibility()
 
         // 渲染:query 未变才落标签,防止过期网络回调覆盖新输入
         let render: (CurrencyQuote) -> Void = { [weak self] quote in
@@ -81,13 +98,24 @@ extension SearchPanelViewController {
             if CurrencyService.shared.isFresh(cached) { return }
         }
 
-        // 2) 过期或缺失:后台刷新
+        // 2) 过期或缺失:先清掉旧目标残留的预览(避免点选切换后短暂显示错误币种),再后台刷新
+        clearCalculatorResult()
+        currencyConversion = nil
         CurrencyService.shared.fetchQuote(
             from: parsed.source.code, to: target.code
         ) { result in
             guard case .success(let quote) = result else { return }
             render(quote)
         }
+    }
+
+    /// 点击币种胶囊:切换换算目标币种并立即重渲染预览
+    func currencyTagClicked(_ code: String) {
+        guard isCurrencyTagModeActive else { return }
+        let query = searchField.stringValue
+        guard let parsed = CurrencyParser.parse(query) else { return }
+        currencyManualTargetCode = code
+        updateCurrencyPreview(parsed: parsed, query: query)
     }
 
     /// 渲染 ghost 预览:前缀与输入文本透明重叠,结果段用次级色显示
@@ -424,6 +452,8 @@ extension SearchPanelViewController {
         let hasResults = !results.isEmpty
         let defaultWindowMode =
             UserDefaults.standard.string(forKey: "defaultWindowMode") ?? "full"
+        // 币种胶囊模式:汇率命中时下方展示胶囊,隐藏结果列表
+        let isCurrencyTagMode = isCurrencyTagModeActive
 
         // UUID 模式和 URL 模式使用独立视图，隐藏 scrollView
         let isUUIDMode = isInUtilityMode && currentUtilityIdentifier == "uuid"
@@ -436,17 +466,21 @@ extension SearchPanelViewController {
         let isWebLinkQueryModeEmpty = isInWebLinkQueryMode && !hasQuery
 
         divider.isHidden = !hasQuery && !isShowingRecents && !isIndependentViewMode
-        scrollView.isHidden = !hasResults || isIndependentViewMode || isWebLinkQueryModeEmpty
-        noResultsLabel.isHidden = !hasQuery || hasResults || isIndependentViewMode
+        scrollView.isHidden =
+            !hasResults || isIndependentViewMode || isWebLinkQueryModeEmpty || isCurrencyTagMode
+        noResultsLabel.isHidden =
+            !hasQuery || hasResults || isIndependentViewMode || isCurrencyTagMode
 
         // Update window height
         let isExpanded =
             (defaultWindowMode == "full" || isIndependentViewMode)
             || (hasQuery && hasResults)
             || isInAnyExtensionMode  // 扩展模式下也需要展开
+            || isCurrencyTagMode  // 币种胶囊模式同样展开
 
-        if defaultWindowMode == "full" || isIndependentViewMode || isInAnyExtensionMode {
-            // Full 模式、独立视图模式或扩展模式：始终展开
+        if defaultWindowMode == "full" || isIndependentViewMode || isInAnyExtensionMode
+            || isCurrencyTagMode {
+            // Full 模式、独立视图模式、扩展模式或币种胶囊模式：始终展开
             updateWindowHeight(expanded: true)
         } else {
             // Simple 模式：有搜索内容且有结果时展开
@@ -544,7 +578,9 @@ extension SearchPanelViewController {
             shouldExpand = expanded && !results.isEmpty  // Simple mode: only expand with results
         }
 
-        let targetHeight: CGFloat = shouldExpand ? 500 : headerHeight
+        // 币种胶囊模式始终展开(胶囊区独立于结果列表)
+        let targetHeight: CGFloat =
+            (shouldExpand || isCurrencyTagModeActive) ? 500 : headerHeight
 
         // Update the height constraint instead of just the window frame
         contentHeightConstraint?.constant = targetHeight

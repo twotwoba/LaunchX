@@ -153,6 +153,23 @@ enum CurrencyCatalog {
         }
         return hits.count == 1 ? firstMatch : nil
     }
+
+    // MARK: - 胶囊标签展示顺序
+
+    /// 币种胶囊的展示顺序(常用在前):人民币/美元/欧元/日元/英镑/港币/新台币/韩元等打头,其余小币种殿后
+    static let tagOrderCodes: [String] = [
+        "CNY", "USD", "EUR", "JPY", "GBP", "HKD", "TWD", "KRW", "SGD", "AUD",
+        "CAD", "CHF", "NZD", "THB", "MYR", "VND", "INR", "RUB", "PHP", "IDR",
+        "TRY", "AED", "BRL", "MXN", "ZAR", "SEK", "NOK", "DKK",
+    ]
+
+    /// 胶囊展示列表:按常用度排序并排除源币种(自换无意义);目录外代码忽略
+    static func tagOrder(excluding sourceCode: String?) -> [CurrencyDefinition] {
+        tagOrderCodes.compactMap { code in
+            guard code != sourceCode else { return nil }
+            return currencies.first { $0.code == code }
+        }
+    }
 }
 
 // MARK: - 汇率报价

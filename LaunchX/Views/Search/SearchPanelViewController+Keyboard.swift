@@ -201,6 +201,12 @@ extension SearchPanelViewController {
                 return nil
             }
 
+            // 币种胶囊模式下无换算结果(如行情未返回)时,回车不误开列表项,仅收起面板
+            if isCurrencyTagModeActive {
+                PanelManager.shared.hidePanel()
+                return nil
+            }
+
             openSelected()
             return nil
         default:

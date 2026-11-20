@@ -79,6 +79,8 @@ struct CurrencySettingsView: View {
                         examples: ["$100", "100usd", "美元100", "100块", "100rmb"])
                     usageRow("输入 \"100usd>jpy\" 或 \"100usd to jpy\" 可指定目标货币。",
                         examples: nil)
+                    usageRow("输入金额后下方会展示常用币种胶囊,点击即可切换目标货币(常用币种在前)。",
+                        examples: nil)
                     usageRow("默认互转为目标货币;源币种即目标货币时,人民币与美元互相回转。",
                         examples: nil)
                     usageRow("回车复制换算结果,\"=\" 键将数值带回输入框继续计算。", examples: nil)

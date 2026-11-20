@@ -1493,6 +1493,8 @@ extension SearchPanelViewController {
 
     /// 更新 Claude Code Switcher 模式 UI
     func updateClaudeCodeModeUI() {
+        // 清理普通模式遗留的内联预览(计算器 ghost / 币种胶囊,胶囊会隐藏结果列表)
+        clearInlinePreview()
         setPlaceholder("搜索 Provider / 上下文 / MCP / Skills...")
     }
 
@@ -2044,6 +2046,8 @@ extension SearchPanelViewController {
         }
 
         isInCodexMode = true
+        // 清理普通模式遗留的内联预览(计算器 ghost / 币种胶囊,胶囊会隐藏结果列表)
+        clearInlinePreview()
         setPlaceholder("搜索 Provider / 上下文 / MCP / Skills...")
         loadCodexItems()
 
