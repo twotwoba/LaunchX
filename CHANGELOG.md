@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.6.3
+- 增加了 汇工具
+- 优化了计算器功能
+
 ## v0.6.1
 - bug修复：快捷切换claude Provider会错误的影响到codex中的配置
 

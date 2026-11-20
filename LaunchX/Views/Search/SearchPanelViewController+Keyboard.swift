@@ -135,10 +135,20 @@ extension SearchPanelViewController {
             return nil
         case 125:  // Down arrow
             if isComposing { return event }  // 让输入法处理
+            // 计算器面板模式:终端式回溯历史表达式(↓ 更新,越过最新回到原文)
+            if isCalculatorModeActive {
+                recallHistoryStep(older: false)
+                return nil
+            }
             moveSelectionDown()
             return nil
         case 126:  // Up arrow
             if isComposing { return event }  // 让输入法处理
+            // 计算器面板模式:终端式回溯历史表达式(↑ 更旧)
+            if isCalculatorModeActive {
+                recallHistoryStep(older: true)
+                return nil
+            }
             moveSelectionUp()
             return nil
         case 123:  // Left arrow
@@ -179,11 +189,9 @@ extension SearchPanelViewController {
         case 36:  // Return
             if isComposing { return event }  // 让输入法确认输入
 
-            // 如果计算器有结果，回车复制结果
-            if let result = calculatorResult {
-                let pasteboard = NSPasteboard.general
-                pasteboard.clearContents()
-                pasteboard.setString(result, forType: .string)
+            // 如果计算器有结果，回车复制结果并记录历史(ans 更新)
+            if calculatorResult != nil {
+                consumeCalculatorResult()
 
                 // 复制后退出
                 PanelManager.shared.hidePanel()

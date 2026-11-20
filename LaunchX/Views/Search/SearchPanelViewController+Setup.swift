@@ -190,6 +190,9 @@ extension SearchPanelViewController {
 
         // 币种胶囊选择行(汇率命中时替换结果列表展示)
         setupCurrencyTagView()
+
+        // 计算器面板(表达式命中时替换结果列表展示)
+        setupCalculatorPanelView()
     }
 
     /// 设置币种胶囊选择行 UI

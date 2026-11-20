@@ -93,6 +93,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         print("LaunchX: System will sleep, saving data immediately")
         // 立即保存剪贴板数据
         ClipboardService.shared.saveImmediately()
+        // 立即保存计算历史
+        CalculatorHistoryService.shared.saveImmediately()
     }
 
     /// 应用保存的键盘映射设置
@@ -691,6 +693,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
             // 立即保存剪贴板数据（磁盘写入优化：确保不丢失数据）
             ClipboardService.shared.saveImmediately()
+            // 立即保存计算历史
+            CalculatorHistoryService.shared.saveImmediately()
 
             // 确保停止权限检查定时器，防止干扰退出
             PermissionService.shared.stopPeriodicCheck()
@@ -724,6 +728,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // 立即保存剪贴板数据（磁盘写入优化：确保不丢失数据）
         ClipboardService.shared.saveImmediately()
+        // 立即保存计算历史
+        CalculatorHistoryService.shared.saveImmediately()
 
         scheduleRelaunch()
         PermissionService.shared.stopPeriodicCheck()

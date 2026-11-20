@@ -168,6 +168,15 @@ class SearchPanelViewController: NSViewController {
     // 计算器状态
     var calculatorResult: String? = nil
     let calculatorResultLabel = NSTextField(labelWithString: "")
+    /// 计算器面板(表达式命中时替换结果列表:结果大字行 + 函数 token + 历史)
+    let calculatorPanelView = CalculatorPanelView()
+    /// 当前求值结果数值(面板渲染与 ans 更新用)
+    var calculatorResultValue: Double? = nil
+    /// 上一次消费的结果数值(ans 变量;不随清理清零,跨计算保留)
+    var lastCalculatorAnswer: Double? = nil
+    /// ↑/↓ 历史回溯:当前回溯下标(nil=未回溯)与回溯前原文
+    var historyRecallIndex: Int? = nil
+    var preRecallText: String = ""
 
     // 汇率预览状态(与计算器共用同一 ghost 标签,语法互斥不会同时出现)
     var currencyConversion: CurrencyPreviewConversion? = nil  // 回车复制 / "=" 回填所需文案
@@ -178,12 +187,14 @@ class SearchPanelViewController: NSViewController {
     /// 是否处于币种胶囊选择态(汇率预览激活,下方展示胶囊而非结果列表)
     var isCurrencyTagModeActive: Bool { !currencyTagView.isHidden }
 
-    /// 统一清理计算器预览状态
+    /// 统一清理计算器预览状态(所有退出路径经此收敛:含面板隐藏与回溯状态复位)
     func clearCalculatorResult() {
         calculatorResult = nil
+        calculatorResultValue = nil
         calculatorResultLabel.isHidden = true
         calculatorResultLabel.stringValue = ""
         calculatorResultLabel.attributedStringValue = NSAttributedString(string: "")
+        exitCalculatorPanelMode()
     }
 
     /// 清理汇率预览状态(含胶囊行隐藏;ghost 标签由当前展示方统一渲染)

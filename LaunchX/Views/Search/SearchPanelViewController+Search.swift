@@ -37,16 +37,6 @@ extension SearchPanelViewController {
         updateCalculatorPreview(query)
     }
 
-    /// 计算器预览:求值成功显示 ghost 文本,失败清理
-    func updateCalculatorPreview(_ query: String) {
-        if let result = CalculatorService.shared.evaluate(query) {
-            calculatorResult = result
-            showGhostPreview(query: query, resultText: " = \(result)")
-        } else {
-            clearCalculatorResult()
-        }
-    }
-
     /// 汇率预览:先渲染缓存(可能过期,离线也有结果),过期或缺失时再发起网络刷新
     func updateCurrencyPreview(parsed: CurrencyParser.ParseResult, query: String) {
         // 目标解析优先级:输入显式目标 > 胶囊点选 > 设置默认(源即目标时按 CNY⇄USD 回转)
@@ -457,6 +447,8 @@ extension SearchPanelViewController {
             UserDefaults.standard.string(forKey: "defaultWindowMode") ?? "full"
         // 币种胶囊模式:汇率命中时下方展示胶囊,隐藏结果列表
         let isCurrencyTagMode = isCurrencyTagModeActive
+        // 计算器面板模式:表达式命中时下方展示计算器面板,隐藏结果列表
+        let isCalculatorMode = isCalculatorModeActive
 
         // UUID 模式和 URL 模式使用独立视图，隐藏 scrollView
         let isUUIDMode = isInUtilityMode && currentUtilityIdentifier == "uuid"
@@ -471,8 +463,10 @@ extension SearchPanelViewController {
         divider.isHidden = !hasQuery && !isShowingRecents && !isIndependentViewMode
         scrollView.isHidden =
             !hasResults || isIndependentViewMode || isWebLinkQueryModeEmpty || isCurrencyTagMode
+            || isCalculatorMode
         noResultsLabel.isHidden =
             !hasQuery || hasResults || isIndependentViewMode || isCurrencyTagMode
+            || isCalculatorMode
 
         // Update window height
         let isExpanded =
@@ -480,9 +474,10 @@ extension SearchPanelViewController {
             || (hasQuery && hasResults)
             || isInAnyExtensionMode  // 扩展模式下也需要展开
             || isCurrencyTagMode  // 币种胶囊模式同样展开
+            || isCalculatorMode  // 计算器面板模式同样展开
 
         if defaultWindowMode == "full" || isIndependentViewMode || isInAnyExtensionMode
-            || isCurrencyTagMode {
+            || isCurrencyTagMode || isCalculatorMode {
             // Full 模式、独立视图模式、扩展模式或币种胶囊模式：始终展开
             updateWindowHeight(expanded: true)
         } else {
@@ -588,9 +583,9 @@ extension SearchPanelViewController {
             shouldExpand = expanded && !results.isEmpty  // Simple mode: only expand with results
         }
 
-        // 币种胶囊模式始终展开(胶囊区独立于结果列表)
+        // 币种胶囊模式/计算器面板模式始终展开(面板区独立于结果列表)
         let targetHeight: CGFloat =
-            (shouldExpand || isCurrencyTagModeActive) ? 500 : headerHeight
+            (shouldExpand || isCurrencyTagModeActive || isCalculatorModeActive) ? 500 : headerHeight
 
         // Update the height constraint instead of just the window frame
         contentHeightConstraint?.constant = targetHeight
