@@ -107,6 +107,8 @@ final class IDERecentProjectsService {
             return getZedRecentProjects(limit: limit)
         case .antigravity:
             return getAntigravityRecentProjects(limit: limit)
+        case .winc:
+            return getWincRecentProjects(limit: limit)
         default:
             if ideType.isJetBrains {
                 return getJetBrainsRecentProjects(for: ideType, limit: limit)
@@ -794,6 +796,49 @@ final class IDERecentProjectsService {
         return projects
     }
 
+    // MARK: - Winc
+
+    private func getWincRecentProjects(limit: Int) -> [IDEProject] {
+        // Winc 的运行状态存在 state.json，`recent` 是最近打开的目录路径数组（最新的在前）
+        let statePath = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/winc/state.json")
+            .path
+
+        guard let data = FileManager.default.contents(atPath: statePath),
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let paths = json["recent"] as? [String]
+        else {
+            return []
+        }
+
+        return parseWincRecentProjects(paths, limit: limit)
+    }
+
+    func parseWincRecentProjects(_ paths: [String], limit: Int) -> [IDEProject] {
+        var projects: [IDEProject] = []
+        var seenPaths = Set<String>()  // 用于去重
+
+        for path in paths {
+            guard projects.count < limit else { break }
+
+            guard !seenPaths.contains(path),
+                FileManager.default.fileExists(atPath: path)
+            else { continue }
+
+            seenPaths.insert(path)
+
+            let name = (path as NSString).lastPathComponent
+            projects.append(
+                IDEProject(
+                    name: name,
+                    path: path,
+                    ideType: .winc
+                ))
+        }
+
+        return projects
+    }
+
     // MARK: - Remove Recent Projects
 
     /// 从最近项目列表中移除指定项目
@@ -810,6 +855,8 @@ final class IDERecentProjectsService {
             removeZedRecentProject(projectPath: projectPath)
         case .antigravity:
             removeAntigravityRecentProject(projectPath: projectPath)
+        case .winc:
+            removeWincRecentProject(projectPath: projectPath)
         default:
             if ideType.isJetBrains {
                 removeJetBrainsRecentProject(for: ideType, projectPath: projectPath)
@@ -986,6 +1033,31 @@ final class IDERecentProjectsService {
             )
         } catch {
             print("Failed to remove Antigravity recent project: \(error)")
+        }
+    }
+
+    /// 从Winc最近项目列表中移除项目
+    /// Winc 的 state.json 除 `recent` 外还存有现场等其他状态，整体读入后只过滤 `recent` 再原子写回
+    private func removeWincRecentProject(projectPath: String) {
+        let statePath = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/winc/state.json")
+            .path
+
+        guard let data = FileManager.default.contents(atPath: statePath),
+            var json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let recent = json["recent"] as? [String]
+        else { return }
+
+        let filtered = recent.filter { $0 != projectPath }
+        guard filtered.count != recent.count else { return }
+
+        json["recent"] = filtered
+        guard let modifiedData = try? JSONSerialization.data(withJSONObject: json) else { return }
+
+        do {
+            try modifiedData.write(to: URL(fileURLWithPath: statePath), options: .atomic)
+        } catch {
+            print("Failed to remove Winc recent project: \(error)")
         }
     }
 

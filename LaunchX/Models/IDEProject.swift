@@ -7,6 +7,7 @@ enum IDEType: String, CaseIterable {
     case cursor = "Cursor"
     case zed = "Zed"
     case antigravity = "Antigravity"
+    case winc = "Winc"
     case jetbrainsIntelliJ = "IntelliJ IDEA"
     case jetbrainsPyCharm = "PyCharm"
     case jetbrainsWebStorm = "WebStorm"
@@ -21,6 +22,7 @@ enum IDEType: String, CaseIterable {
         case .cursor: return ["com.todesktop.230313mzl4w4u92", "com.cursor.Cursor"]
         case .zed: return ["dev.zed.Zed", "dev.zed.Zed-Preview", "dev.zed.Zed-Nightly"]
         case .antigravity: return ["com.google.Antigravity", "com.google.AntigravityPreview"]
+        case .winc: return ["com.deeix.winc"]
         case .jetbrainsIntelliJ:
             return [
                 "com.jetbrains.intellij", "com.jetbrains.intellij.ce", "com.jetbrains.intellij-EAP",
@@ -39,7 +41,7 @@ enum IDEType: String, CaseIterable {
     /// 是否为 JetBrains 系列
     var isJetBrains: Bool {
         switch self {
-        case .vscode, .cursor, .zed, .antigravity: return false
+        case .vscode, .cursor, .zed, .antigravity, .winc: return false
         default: return true
         }
     }
@@ -59,6 +61,10 @@ enum IDEType: String, CaseIterable {
         }
         if lowercasedPath.contains("antigravity") || lowercasedPath.hasSuffix("/antigravity.app") {
             return .antigravity
+        }
+        // 只按 .app 后缀严格匹配，避免把名为 winc 的普通目录（如源码目录）误判为 Winc 应用
+        if lowercasedPath.hasSuffix("/winc.app") {
+            return .winc
         }
         if lowercasedPath.contains("intellij") {
             return .jetbrainsIntelliJ
