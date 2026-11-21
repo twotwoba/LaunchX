@@ -315,4 +315,48 @@ final class IDERecentProjectsServiceTests: XCTestCase {
         XCTAssertEqual(projects.map(\.name), ["projD"])
         XCTAssertNotNil(projects.first?.lastOpened)
     }
+
+    // MARK: - Winc
+
+    /// 在临时目录创建真实存在的项目目录，返回按名字索引的绝对路径。
+    private func makeWincProjectDirs(prefix: String, names: [String]) throws -> [String: String] {
+        let tmp = FileManager.default.temporaryDirectory.appendingPathComponent(prefix)
+        try? FileManager.default.removeItem(at: tmp)
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+
+        var result: [String: String] = [:]
+        for name in names {
+            let abs = tmp.appendingPathComponent(name).path
+            try FileManager.default.createDirectory(atPath: abs, withIntermediateDirectories: true)
+            result[name] = abs
+        }
+        return result
+    }
+
+    /// Winc 的 `recent` 顺序即最近打开顺序（最新的在前），解析应保持原序、去重并过滤不存在的路径。
+    func testWincRecentProjectsKeepsOrderAndDeduplicates() throws {
+        let roots = try makeWincProjectDirs(
+            prefix: "launchx_winc_parse", names: ["projA", "projB", "projC"])
+        let a = roots["projA"]!, b = roots["projB"]!, c = roots["projC"]!
+
+        // 缺失路径应被过滤；重复路径应去重（保留首次出现位置）
+        let paths = [a, b, "/nonexistent/winc/project", c, a]
+        let projects = IDERecentProjectsService.shared.parseWincRecentProjects(paths, limit: 20)
+
+        XCTAssertEqual(projects.map(\.name), ["projA", "projB", "projC"])
+        XCTAssertEqual(projects.map(\.path), [a, b, c])
+        XCTAssertTrue(projects.allSatisfy { $0.ideType == .winc })
+    }
+
+    /// limit 应在去重/过滤之前生效——只取数组前 limit 个有效条目。
+    func testWincRecentProjectsLimitApplied() throws {
+        let roots = try makeWincProjectDirs(
+            prefix: "launchx_winc_limit", names: ["projA", "projB", "projC"])
+        let a = roots["projA"]!, b = roots["projB"]!, c = roots["projC"]!
+
+        let projects = IDERecentProjectsService.shared.parseWincRecentProjects(
+            [a, b, c], limit: 2)
+
+        XCTAssertEqual(projects.map(\.name), ["projA", "projB"])
+    }
 }
