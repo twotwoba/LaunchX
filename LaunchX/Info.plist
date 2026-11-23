@@ -11,5 +11,25 @@
 	<string>LaunchX 需要访问您的提醒事项以显示和管理待办任务。</string>
 	<key>NSCalendarsUsageDescription</key>
 	<string>LaunchX 需要访问您的日历以同步日程信息。</string>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.launchx.toolbox</string>
+			<key>UTTypeDescription</key>
+			<string>LaunchX 百宝箱文件</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.json</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>launchx-toolbox</string>
+				</array>
+			</dict>
+		</dict>
+	</array>
 </dict>
 </plist>

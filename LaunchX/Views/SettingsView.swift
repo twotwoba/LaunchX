@@ -25,6 +25,11 @@ struct SettingsView: View {
                     Label("高级扩展", systemImage: "sparkles")
                 }
 
+            ToolboxSettingsView()
+                .tabItem {
+                    Label("百宝箱", systemImage: "shippingbox")
+                }
+
             PerformanceSettingsView()
                 .tabItem {
                     Label("性能", systemImage: "chart.xyaxis.line")
