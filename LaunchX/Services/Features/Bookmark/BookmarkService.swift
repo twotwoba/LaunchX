@@ -43,6 +43,7 @@ enum BookmarkSource: String, Codable, CaseIterable {
     case vivaldi = "Vivaldi"
     case opera = "Opera"
     case helium = "Helium"
+    case egoLite = "EgoLite"
 
     var bundleIdentifier: String {
         switch self {
@@ -54,6 +55,7 @@ enum BookmarkSource: String, Codable, CaseIterable {
         case .vivaldi: return "com.vivaldi.Vivaldi"
         case .opera: return "com.operasoftware.Opera"
         case .helium: return "net.imput.helium"
+        case .egoLite: return "com.citrolabs.ego.lite"
         }
     }
 
@@ -75,6 +77,8 @@ enum BookmarkSource: String, Codable, CaseIterable {
             return NSHomeDirectory() + "/Library/Application Support/com.operasoftware.Opera/Bookmarks"
         case .helium:
             return NSHomeDirectory() + "/Library/Application Support/net.imput.helium/Default/Bookmarks"
+        case .egoLite:
+            return NSHomeDirectory() + "/Library/Application Support/Citro Labs/ego lite/Default/Bookmarks"
         }
     }
 
@@ -108,6 +112,7 @@ enum BookmarkSource: String, Codable, CaseIterable {
         case .vivaldi: return "Vivaldi"
         case .opera: return "Opera"
         case .helium: return "Helium"
+        case .egoLite: return "ego lite"
         }
     }
 }
@@ -169,6 +174,7 @@ enum BookmarkOpenWith: String, Codable, CaseIterable {
     case vivaldi = "vivaldi"
     case opera = "opera"
     case helium = "helium"
+    case egoLite = "egoLite"
 
     var displayName: String {
         switch self {
@@ -182,6 +188,7 @@ enum BookmarkOpenWith: String, Codable, CaseIterable {
         case .vivaldi: return "Vivaldi"
         case .opera: return "Opera"
         case .helium: return "Helium"
+        case .egoLite: return "ego lite"
         }
     }
 
@@ -215,6 +222,8 @@ enum BookmarkOpenWith: String, Codable, CaseIterable {
             return BookmarkSource.opera.icon
         case .helium:
             return BookmarkSource.helium.icon
+        case .egoLite:
+            return BookmarkSource.egoLite.icon
         }
     }
 
@@ -229,6 +238,7 @@ enum BookmarkOpenWith: String, Codable, CaseIterable {
         case .vivaldi: return .vivaldi
         case .opera: return .opera
         case .helium: return .helium
+        case .egoLite: return .egoLite
         case .bookmarkBrowser, .defaultBrowser: return nil
         }
     }
@@ -288,6 +298,7 @@ enum BookmarkOpenWithOption: Hashable, Identifiable {
             case .vivaldi: return .vivaldi
             case .opera: return .opera
             case .helium: return .helium
+            case .egoLite: return .egoLite
             }
         }
     }
@@ -313,6 +324,8 @@ enum BookmarkOpenWithOption: Hashable, Identifiable {
             return .browser(.opera)
         case .helium:
             return .browser(.helium)
+        case .egoLite:
+            return .browser(.egoLite)
         }
     }
 }
@@ -354,7 +367,7 @@ final class BookmarkService {
             switch source {
             case .safari:
                 bookmarks.append(contentsOf: loadSafariBookmarks())
-            case .chrome, .brave, .arc, .edge, .vivaldi, .opera, .helium:
+            case .chrome, .brave, .arc, .edge, .vivaldi, .opera, .helium, .egoLite:
                 bookmarks.append(contentsOf: loadChromiumBookmarks(source: source))
             }
         }
@@ -405,6 +418,8 @@ final class BookmarkService {
             openWithBrowser(url: url, source: .opera)
         case .helium:
             openWithBrowser(url: url, source: .helium)
+        case .egoLite:
+            openWithBrowser(url: url, source: .egoLite)
         }
     }
 
